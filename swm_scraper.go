@@ -15,6 +15,7 @@ import (
 	"time"
 	"strings"
 	"strconv"
+	"flag"
     "github.com/PuerkitoBio/goquery"
 	"github.com/chromedp/chromedp"
 	"context"
@@ -91,6 +92,14 @@ func show_db_content() ([]PoolStatus, error) {
 
 
 func main() {
+	webMode := flag.Bool("web", false, "Start web server mode")
+	flag.Parse()
+
+	if *webMode {
+		startWebServer()
+		return
+	}
+
     ctx, cancel := chromedp.NewContext(context.Background())
     defer cancel()
 
