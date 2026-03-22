@@ -149,7 +149,7 @@ async function fetchData() {
     
     historyData.value = await fetchHistory(params.toString())
     if (historyData.value.length) {
-      lastUpdated.value = formatTimestamp(historyData.value[0].timestamp)
+      lastUpdated.value = formatTimestamp(historyData.value[historyData.value.length - 1].timestamp)
     }
   } catch (err) {
     console.error('Failed to fetch data:', err)
