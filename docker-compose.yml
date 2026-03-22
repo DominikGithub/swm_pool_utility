@@ -1,0 +1,42 @@
+services:
+  db-init:
+    image: debian:12.9-slim
+    volumes:
+      - ./data:/data
+    command: >
+      sh -c "mkdir -p /data && 
+             if [ ! -f /data/swm_pool_utility.db ]; then 
+               apt-get update && apt-get install -y sqlite3 && 
+               sqlite3 /data/swm_pool_utility.db 'CREATE TABLE IF NOT EXISTS track_pools(id INTEGER PRIMARY KEY AUTOINCREMENT, name VARCHAR, dtime DATETIME DEFAULT CURRENT_TIMESTAMP, utility INT);';
+             fi"
+    restart: "no"
+
+  api:
+    build: ./api
+    volumes:
+      - ./data:/data
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  scraper:
+    build: ./scraper
+    volumes:
+      - ./data:/data
+    environment:
+      - DB_PATH=/data/swm_pool_utility.db
+    command: ["/scraper", "5"]
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "80:80"
+    restart: unless-stopped
+    depends_on:
+      - api

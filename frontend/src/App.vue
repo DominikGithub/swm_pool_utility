@@ -1,0 +1,132 @@
+<template>
+  <header>
+    <h1>SWM Pool Utilization</h1>
+  </header>
+  <main>
+    <div class="controls">
+      <select v-model="selectedPool" @change="fetchData">
+        <option value="">All Pools</option>
+        <option v-for="pool in pools" :key="pool" :value="pool">{{ pool }}</option>
+      </select>
+      <select v-model="selectedDays" @change="fetchData">
+        <option :value="1">Last 24 hours</option>
+        <option :value="3">Last 3 days</option>
+        <option :value="7">Last 7 days</option>
+        <option :value="14">Last 14 days</option>
+        <option :value="30">Last 30 days</option>
+        <option :value="90">Last 90 days</option>
+      </select>
+      <button @click="fetchData">Refresh</button>
+    </div>
+
+    <div v-if="loading" class="loading">Loading...</div>
+    <template v-else>
+      <div class="chart-container">
+        <PoolChart :data="chartData" />
+      </div>
+      
+      <div class="pool-list">
+        <PoolCard 
+          v-for="pool in currentPools" 
+          :key="pool.name" 
+          :pool="pool" 
+        />
+      </div>
+      
+      <p v-if="lastUpdated" class="last-updated">
+        Last updated: {{ lastUpdated }}
+      </p>
+    </template>
+  </main>
+</template>
+
+<script setup>
+import { ref, computed, onMounted } from 'vue'
+import PoolChart from './components/PoolChart.vue'
+import PoolCard from './components/PoolCard.vue'
+import { fetchPools, fetchHistory } from './composables/api'
+
+const pools = ref([])
+const historyData = ref([])
+const selectedPool = ref('')
+const selectedDays = ref(7)
+const loading = ref(true)
+const lastUpdated = ref('')
+
+function formatTimestamp(isoString) {
+  const date = new Date(isoString)
+  return date.toLocaleString('de-DE', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
+const currentPools = computed(() => {
+  if (!historyData.value.length) return []
+  
+  const poolMap = new Map()
+  historyData.value.forEach(item => {
+    if (!poolMap.has(item.name)) {
+      const utilization = Math.max(0, 100 - item.utility)
+      poolMap.set(item.name, { name: item.name, utility: utilization, timestamp: item.timestamp })
+    }
+  })
+  return Array.from(poolMap.values()).slice(0, 12)
+})
+
+const chartData = computed(() => {
+  if (!historyData.value.length) return { labels: [], datasets: [] }
+
+  const days = selectedDays.value
+  const cutoff = new Date()
+  cutoff.setDate(cutoff.getDate() - days)
+  
+  const filtered = historyData.value.filter(d => new Date(d.timestamp) >= cutoff)
+  
+  const poolGroups = {}
+  filtered.forEach(item => {
+    if (!poolGroups[item.name]) poolGroups[item.name] = []
+    const utilization = Math.max(0, 100 - item.utility)
+    poolGroups[item.name].push({ x: formatTimestamp(item.timestamp), y: utilization })
+  })
+
+  const colors = [
+    '#0066cc', '#22c55e', '#eab308', '#ef4444', '#8b5cf6',
+    '#ec4899', '#06b6d4', '#f97316', '#84cc16', '#64748b'
+  ]
+  
+  const datasets = Object.entries(poolGroups).map(([name, items], i) => ({
+    label: name,
+    data: items,
+    borderColor: colors[i % colors.length],
+    tension: 0.3,
+    fill: false
+  }))
+
+  return { datasets }
+})
+
+async function fetchData() {
+  loading.value = true
+  try {
+    const params = new URLSearchParams()
+    if (selectedPool.value) params.set('pool', selectedPool.value)
+    params.set('days', selectedDays.value)
+    
+    historyData.value = await fetchHistory(params.toString())
+    if (historyData.value.length) {
+      lastUpdated.value = formatTimestamp(historyData.value[0].timestamp)
+    }
+  } catch (err) {
+    console.error('Failed to fetch data:', err)
+  }
+  loading.value = false
+}
+
+onMounted(async () => {
+  pools.value = await fetchPools()
+  await fetchData()
+})
+</script>
