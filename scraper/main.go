@@ -44,7 +44,7 @@ func scrape() error {
 		"--disable-dev-shm-usage",
 		"--user-data-dir="+configDir,
 		"--dump-dom",
-		"--virtual-time-budget=15000",
+		"--virtual-time-budget=20000",
 		"https://www.swm.de/baeder/auslastung",
 	)
 
@@ -82,40 +82,44 @@ func scrape() error {
 func extractPoolData(html string) map[string]int {
 	poolStats := make(map[string]int)
 
-	reList := regexp.MustCompile(`bath-capacity__item-list[\s\S]*?headline-s[^>]*>([^<]+)[\s\S]*?(\d+)%`)
-	listMatches := reList.FindAllStringSubmatch(html, -1)
-
-	for _, match := range listMatches {
-		if len(match) >= 3 {
-			name := strings.TrimSpace(match[1])
-			utilityStr := strings.TrimSpace(match[2])
-			utility, err := strconv.Atoi(utilityStr)
-			if err == nil && name != "" {
-				poolStats[name] = utility
-			}
-		}
+	poolsSection := extractPoolsSection(html)
+	if poolsSection == "" {
+		fmt.Println("Could not find pools section")
+		return poolStats
 	}
 
-	if len(poolStats) == 0 {
-		fmt.Println("Trying alternative extraction...")
-		lines := strings.Split(html, "\n")
-		for i, line := range lines {
-			if strings.Contains(line, "headline-s") && !strings.Contains(line, "nav-card") {
-				name := extractTextFromTag(line)
-				if name != "" && len(name) > 2 {
-					for j := i; j < i+20 && j < len(lines); j++ {
-						if strings.Contains(lines[j], "%") {
-							rePct := regexp.MustCompile(`(\d+)\s*%`)
-							pctMatch := rePct.FindStringSubmatch(lines[j])
-							if len(pctMatch) >= 2 {
-								utility, _ := strconv.Atoi(pctMatch[1])
-								if utility > 0 && utility <= 100 {
-									poolStats[name] = utility
-									fmt.Printf("  Found: %s -> %d%%\n", name, utility)
-									break
-								}
-							}
-						}
+	fmt.Printf("Pools section length: %d bytes\n", len(poolsSection))
+
+	rePoolName := regexp.MustCompile(`class="headline-s">([^<]+)</h3>`)
+	rePercent := regexp.MustCompile(`(\d+)\s*%`)
+
+	matches := rePoolName.FindAllStringSubmatchIndex(poolsSection, -1)
+	fmt.Printf("  Found %d pool name matches\n", len(matches))
+
+	for _, match := range matches {
+		if len(match) >= 4 {
+			name := poolsSection[match[2]:match[3]]
+			name = strings.TrimSpace(name)
+
+			if name == "" || isSauna(name) {
+				continue
+			}
+
+			if _, exists := poolStats[name]; exists {
+				continue
+			}
+
+			startPos := match[1]
+			searchArea := poolsSection[startPos : startPos+2000]
+
+			pctMatches := rePercent.FindAllStringSubmatch(searchArea, 5)
+			for _, pctMatch := range pctMatches {
+				if len(pctMatch) >= 2 {
+					pct, err := strconv.Atoi(pctMatch[1])
+					if err == nil && pct >= 0 && pct <= 100 {
+						poolStats[name] = pct
+						fmt.Printf("  Found: %s -> %d%%\n", name, pct)
+						break
 					}
 				}
 			}
@@ -125,17 +129,54 @@ func extractPoolData(html string) map[string]int {
 	return poolStats
 }
 
-func extractTextFromTag(tag string) string {
-	start := strings.Index(tag, ">")
-	if start == -1 {
-		return ""
+func extractPoolsSection(html string) string {
+	lines := strings.Split(html, "\n")
+	var result []string
+	capture := false
+	saunaFound := false
+
+	for i, line := range lines {
+		if strings.Contains(line, "Echtzeit-Auslastung") && strings.Contains(line, "Bäder") {
+			capture = true
+			saunaFound = false
+			result = []string{}
+		}
+
+		if capture {
+			result = append(result, line)
+
+			if strings.Contains(line, "sauna") || strings.Contains(line, "Sauna") {
+				if !saunaFound {
+					saunaFound = true
+				}
+			}
+
+			if saunaFound && (strings.Contains(line, "<section") || (strings.Contains(line, "<h2") && strings.Contains(line, "Sauna"))) {
+				break
+			}
+
+			if strings.Contains(line, "</main>") && i > 100 {
+				break
+			}
+		}
 	}
-	tag = tag[start+1:]
-	end := strings.Index(tag, "<")
-	if end == -1 {
-		return ""
+
+	return strings.Join(result, "\n")
+}
+
+func isSauna(name string) bool {
+	saunaKeywords := []string{
+		"sauna", "Sauna", "SAUNA",
+		"dampf", "Dampf",
+		"thermal", "Thermal",
+		"dantebad", "DanteBad",
 	}
-	return strings.TrimSpace(tag[:end])
+	for _, kw := range saunaKeywords {
+		if strings.Contains(strings.ToLower(name), strings.ToLower(kw)) {
+			return true
+		}
+	}
+	return false
 }
 
 func main() {

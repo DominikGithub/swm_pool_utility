@@ -9,6 +9,7 @@
         <option v-for="pool in pools" :key="pool" :value="pool">{{ pool }}</option>
       </select>
       <select v-model="selectedDays" @change="fetchData">
+        <option :value="0">All data</option>
         <option :value="1">Last 24 hours</option>
         <option :value="3">Last 3 days</option>
         <option :value="7">Last 7 days</option>
@@ -67,7 +68,8 @@ const currentPools = computed(() => {
   if (!historyData.value.length) return []
   
   const poolMap = new Map()
-  historyData.value.forEach(item => {
+  const reversed = [...historyData.value].reverse()
+  reversed.forEach(item => {
     if (!poolMap.has(item.name)) {
       const utilization = Math.max(0, 100 - item.utility)
       poolMap.set(item.name, { name: item.name, utility: utilization, timestamp: item.timestamp })
@@ -80,10 +82,13 @@ const chartData = computed(() => {
   if (!historyData.value.length) return { labels: [], datasets: [] }
 
   const days = selectedDays.value
-  const cutoff = new Date()
-  cutoff.setDate(cutoff.getDate() - days)
+  let filtered = historyData.value
   
-  const filtered = historyData.value.filter(d => new Date(d.timestamp) >= cutoff)
+  if (days > 0) {
+    const cutoff = new Date()
+    cutoff.setDate(cutoff.getDate() - days)
+    filtered = historyData.value.filter(d => new Date(d.timestamp) >= cutoff)
+  }
   
   const poolGroups = {}
   filtered.forEach(item => {

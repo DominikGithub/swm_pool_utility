@@ -42,14 +42,22 @@ func getHistory(c *gin.Context) {
 	daysStr := c.DefaultQuery("days", "7")
 	days, _ := strconv.Atoi(daysStr)
 
-	cutoff := time.Now().AddDate(0, 0, -days)
+	query := "SELECT name, dtime, utility FROM track_pools"
+	var args []interface{}
 
-	query := "SELECT name, dtime, utility FROM track_pools WHERE dtime >= ?"
-	args := []interface{}{cutoff}
-
-	if pool != "" {
-		query += " AND name = ?"
-		args = append(args, pool)
+	if days > 0 {
+		cutoff := time.Now().AddDate(0, 0, -days)
+		query += " WHERE dtime >= ?"
+		args = append(args, cutoff)
+		if pool != "" {
+			query += " AND name = ?"
+			args = append(args, pool)
+		}
+	} else {
+		if pool != "" {
+			query += " WHERE name = ?"
+			args = append(args, pool)
+		}
 	}
 
 	query += " ORDER BY dtime ASC"
@@ -74,6 +82,7 @@ func getHistory(c *gin.Context) {
 }
 
 func formatTimestamp(ts string) string {
+	// Golang format template from numeric example date
 	t, err := time.Parse("2006-01-02 15:04:05", ts)
 	if err != nil {
 		return ts
@@ -104,8 +113,8 @@ func main() {
 	r.GET("/api/pools", getPools)
 	r.GET("/api/history", getHistory)
 
-	log.Println("API server running on :8080")
-	if err := r.Run(":8080"); err != nil {
+	log.Println("API server running on 0.0.0.0:8085")
+	if err := r.Run("0.0.0.0:8085"); err != nil {
 		log.Fatal(err)
 	}
 }
