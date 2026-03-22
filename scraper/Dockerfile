@@ -18,10 +18,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsqlite3-0 \
     ca-certificates \
     fonts-noto \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd -m -u 1000 scraper
+    && rm -rf /var/lib/apt/lists/*
 
 ENV CHROME_BIN=/usr/bin/chromium
 COPY --from=builder /app/scraper /scraper
-USER scraper
 ENTRYPOINT ["/scraper"]
