@@ -169,7 +169,6 @@ func isSauna(name string) bool {
 		"sauna", "Sauna", "SAUNA",
 		"dampf", "Dampf",
 		"thermal", "Thermal",
-		"dantebad", "DanteBad",
 	}
 	for _, kw := range saunaKeywords {
 		if strings.Contains(strings.ToLower(name), strings.ToLower(kw)) {

@@ -1,5 +1,5 @@
 <template>
-  <div class="chart-wrapper">
+  <div class="chart-wrapper" @mouseleave="handleMouseLeave">
     <Line ref="chartRef" :data="data" :options="options" />
   </div>
 </template>
@@ -32,6 +32,13 @@ const chartRef = ref(null)
 
 let lastHoveredDataset = null
 
+function handleMouseLeave() {
+  if (lastHoveredDataset !== null) {
+    lastHoveredDataset = null
+    emit('leave')
+  }
+}
+
 watch(() => props.data, () => {
   if (chartRef.value?.chart) {
     const chart = chartRef.value.chart
@@ -54,8 +61,8 @@ const options = computed(() => ({
     duration: 0
   },
   interaction: {
-    mode: 'index',
-    intersect: false
+    mode: 'point',
+    intersect: true
   },
   onHover: (event, elements) => {
     if (elements.length > 0) {
