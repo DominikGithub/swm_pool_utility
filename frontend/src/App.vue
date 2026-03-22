@@ -37,9 +37,6 @@
         />
       </div>
       
-      <p v-if="lastUpdated" class="last-updated">
-        Last updated: {{ lastUpdated }}
-      </p>
     </template>
   </main>
 </template>

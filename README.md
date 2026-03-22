@@ -1,11 +1,8 @@
 # SWM Pool Utilization Monitor
 
-Monitoring of historical SWM pool utilization.
+Monitoring of historical SWM pool utilization. 
 
-## Dashboard Preview
-
-<img src="res/pool_dashboard_20260322.png" width="600" alt="Pool Dashboard">
-
+[![Pool Dashboard](res/pool_dashboard_20260322.png)](http://grid.resolve.bar:8086/)
 
 
 ## Services
@@ -30,7 +27,7 @@ This will:
 
 | Service   | Setting        | Default | Description              |
 |-----------|----------------|---------|--------------------------|
-| scraper   | interval (min) | 5       | Scrape frequency         |
+| scraper   | interval (min) | 10       | Scrape frequency         |
 
 
 ## API Endpoints

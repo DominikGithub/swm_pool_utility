@@ -172,13 +172,6 @@ button:active {
 .pool-card .value.medium { color: #eab308; }
 .pool-card .value.high { color: #ef4444; }
 
-.last-updated {
-  color: #888;
-  font-size: 0.75rem;
-  margin-top: 0.25rem;
-  flex-shrink: 0;
-}
-
 .loading {
   text-align: center;
   padding: 2rem;

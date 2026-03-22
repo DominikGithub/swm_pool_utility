@@ -180,15 +180,28 @@ func isSauna(name string) bool {
 }
 
 func main() {
-	interval := 15
-	if len(os.Args) > 1 {
-		if v, err := strconv.Atoi(os.Args[1]); err == nil {
+	interval := 10
+	runOnce := false
+
+	for _, arg := range os.Args[1:] {
+		if arg == "--once" || arg == "-o" {
+			runOnce = true
+		} else if v, err := strconv.Atoi(arg); err == nil {
 			interval = v
 		}
 	}
 
 	initDB()
 	defer db.Close()
+
+	if runOnce {
+		fmt.Println("SWM Pool Scraper running once...")
+		if err := scrape(); err != nil {
+			log.Printf("Scrape failed: %v", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	fmt.Printf("SWM Pool Scraper starting (interval: %d min)\n", interval)
 

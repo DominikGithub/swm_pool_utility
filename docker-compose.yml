@@ -30,7 +30,6 @@ services:
       - db_data:/data
     environment:
       - DB_PATH=/data/swm_pool_utility.db
-    command: ["/scraper", "10"]
     restart: unless-stopped
 
   frontend:
