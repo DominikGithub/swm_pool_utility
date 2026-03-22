@@ -54,8 +54,8 @@ const options = computed(() => ({
     duration: 0
   },
   interaction: {
-    mode: 'point',
-    intersect: true
+    mode: 'index',
+    intersect: false
   },
   onHover: (event, elements) => {
     if (elements.length > 0) {
@@ -74,23 +74,24 @@ const options = computed(() => ({
   },
   elements: {
     point: {
-      radius: 4,
-      hoverRadius: 8,
+      radius: 3,
+      hoverRadius: 6,
       hoverBorderWidth: 2,
-      hitRadius: 15
+      hitRadius: 10
     },
     line: {
-      hitRadius: 15
+      hitRadius: 10
     }
   },
   plugins: {
     legend: {
       position: 'bottom',
+      display: false,
       labels: {
-        boxWidth: 20,
-        boxHeight: 3,
-        padding: 15,
-        font: { size: 12 },
+        boxWidth: 12,
+        boxHeight: 2,
+        padding: 10,
+        font: { size: 10 },
         usePointStyle: true
       }
     },
@@ -98,6 +99,7 @@ const options = computed(() => ({
       animation: false,
       filter: (tooltipItem) => tooltipItem.dataset.data.length > 0,
       callbacks: {
+        title: (items) => items[0]?.label || '',
         label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y}%`
       }
     }
@@ -107,25 +109,19 @@ const options = computed(() => ({
       beginAtZero: true,
       max: 100,
       ticks: {
-        callback: (v) => v + '%'
+        callback: (v) => v + '%',
+        font: { size: 10 }
       },
       title: {
-        display: true,
-        text: 'Utilization',
-        font: {
-          size: 13,
-          weight: '500',
-          family: "'Segoe UI', system-ui, -apple-system, sans-serif"
-        },
-        color: '#4b5563',
-        padding: { top: 10 }
+        display: false
       }
     },
     x: {
       type: 'category',
       ticks: {
-        maxTicksLimit: 10,
-        font: { size: 10 }
+        maxTicksLimit: 6,
+        font: { size: 9 },
+        maxRotation: 45
       }
     }
   }
