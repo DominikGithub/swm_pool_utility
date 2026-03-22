@@ -2,6 +2,12 @@
 
 Monitoring of historical SWM pool utilization.
 
+## Dashboard Preview
+
+<img src="res/pool_dashboard_20260322.png" width="600" alt="Pool Dashboard">
+
+
+
 ## Services
 
 - **api** - REST API serving historical pool utilization data 

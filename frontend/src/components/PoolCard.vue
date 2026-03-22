@@ -54,28 +54,25 @@ const levelClass = computed(() => {
 }
 
 .star-btn {
-  background: none;
-  border: none;
-  padding: 0;
+  background: white;
+  border: 1px solid #e5e7eb;
+  padding: 2px;
   cursor: pointer;
   color: #d1d5db;
-  transition: color 0.2s ease, transform 0.2s ease;
+  transition: all 0.2s ease;
   flex-shrink: 0;
-  filter: none;
+  border-radius: 4px;
+  line-height: 1;
   box-shadow: none;
-  border-radius: 0;
 }
 
 .star-btn:hover {
   color: #fbbf24;
-  transform: scale(1.1);
+  border-color: #fbbf24;
 }
 
 .star-btn.active {
   color: #fbbf24;
-}
-
-.star-btn.active:hover {
-  transform: scale(1.1);
+  border-color: #fbbf24;
 }
 </style>
