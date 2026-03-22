@@ -23,14 +23,17 @@
     <div v-if="loading" class="loading">Loading...</div>
     <template v-else>
       <div class="chart-container">
-        <PoolChart :data="chartData" />
+        <PoolChart :data="chartData" @hover="hoveredPool = $event" @leave="hoveredPool = null" />
       </div>
       
       <div class="pool-list">
         <PoolCard 
           v-for="pool in currentPools" 
           :key="pool.name" 
-          :pool="pool" 
+          :pool="pool"
+          :isHovered="hoveredPool === pool.name"
+          :isFavorite="favorite === pool.name"
+          @toggleFavorite="toggleFavorite(pool.name)"
         />
       </div>
       
@@ -53,6 +56,30 @@ const selectedPool = ref('')
 const selectedDays = ref(7)
 const loading = ref(true)
 const lastUpdated = ref('')
+const hoveredPool = ref(null)
+const favorite = ref('')
+
+function getCookie(name) {
+  const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'))
+  return match ? decodeURIComponent(match[2]) : null
+}
+
+function setCookie(name, value, days = 365) {
+  const expires = new Date(Date.now() + days * 864e5).toUTCString()
+  document.cookie = name + '=' + encodeURIComponent(value) + '; expires=' + expires + '; path=/'
+}
+
+function toggleFavorite(poolName) {
+  if (favorite.value === poolName) {
+    favorite.value = ''
+    setCookie('swm_favorite', '')
+  } else {
+    favorite.value = poolName
+    setCookie('swm_favorite', poolName)
+  }
+  selectedPool.value = favorite.value
+  fetchData()
+}
 
 function formatTimestamp(isoString) {
   const date = new Date(isoString)
@@ -132,6 +159,8 @@ async function fetchData() {
 
 onMounted(async () => {
   pools.value = await fetchPools()
+  favorite.value = getCookie('swm_favorite') || ''
+  selectedPool.value = favorite.value
   await fetchData()
 })
 </script>

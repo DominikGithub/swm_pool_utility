@@ -1,11 +1,11 @@
 <template>
   <div class="chart-wrapper">
-    <Line :data="data" :options="options" />
+    <Line ref="chartRef" :data="data" :options="options" />
   </div>
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { Line } from 'vue-chartjs'
 import {
   Chart as ChartJS,
@@ -27,6 +27,25 @@ const props = defineProps({
   }
 })
 
+const emit = defineEmits(['hover', 'leave'])
+const chartRef = ref(null)
+
+let lastHoveredDataset = null
+
+watch(() => props.data, () => {
+  if (chartRef.value?.chart) {
+    const chart = chartRef.value.chart
+    
+    chart.data.datasets.forEach((dataset, datasetIndex) => {
+      const meta = chart.getDatasetMeta(datasetIndex)
+      if (meta.dataset) {
+        meta.dataset.options = meta.dataset.options || {}
+      }
+    })
+    chart.update('none')
+  }
+}, { deep: true })
+
 const options = computed(() => ({
   responsive: true,
   maintainAspectRatio: false,
@@ -37,6 +56,21 @@ const options = computed(() => ({
   interaction: {
     mode: 'point',
     intersect: true
+  },
+  onHover: (event, elements) => {
+    if (elements.length > 0) {
+      const datasetIndex = elements[0].datasetIndex
+      const poolName = props.data.datasets[datasetIndex]?.label
+      if (poolName && poolName !== lastHoveredDataset) {
+        lastHoveredDataset = poolName
+        emit('hover', poolName)
+      }
+    } else {
+      if (lastHoveredDataset !== null) {
+        lastHoveredDataset = null
+        emit('leave')
+      }
+    }
   },
   elements: {
     point: {
