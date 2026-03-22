@@ -1,0 +1,205 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #f5f5f5;
+  color: #333;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+header {
+  background: linear-gradient(135deg, #1a1a2e 0%, #0066cc 50%, #22c55e 100%);
+  color: white;
+  padding: 1rem 2rem;
+  flex-shrink: 0;
+}
+
+header h1 {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  max-width: 1400px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 1.5rem 2rem;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.controls {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+select {
+  padding: 0.6rem 2.5rem 0.6rem 1rem;
+  border: 2px solid #e0e7ef;
+  border-radius: 12px;
+  background: white;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #1a1a2e;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M2 4l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 1rem center;
+  transition: all 0.25s ease;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  min-width: 160px;
+}
+
+select:hover {
+  border-color: #0066cc;
+  box-shadow: 0 4px 12px rgba(0,102,204,0.15);
+  transform: translateY(-1px);
+}
+
+select:focus {
+  outline: none;
+  border-color: #0066cc;
+  box-shadow: 0 0 0 3px rgba(0,102,204,0.2), 0 4px 12px rgba(0,102,204,0.15);
+}
+
+button {
+  padding: 0.6rem 1.5rem;
+  background: #0066cc;
+  color: white;
+  border: none;
+  border-radius: 12px;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  box-shadow: 0 4px 12px rgba(0,102,204,0.25);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0,102,204,0.35);
+}
+
+button:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(0,102,204,0.25);
+}
+
+.chart-container {
+  flex: 1 1 50%;
+  background: white;
+  border-radius: 8px;
+  padding: 1rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.chart-container canvas {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  right: 1rem;
+  bottom: 1rem;
+}
+
+.pool-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+  flex: 0 1 auto;
+  overflow-y: auto;
+  max-height: calc(100vh - 420px);
+  padding-bottom: 0.5rem;
+}
+
+.pool-card {
+  background: white;
+  border-radius: 8px;
+  padding: 1rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  transition: box-shadow 0.2s ease, background-color 0.2s ease;
+}
+
+.pool-card.hovered {
+  box-shadow: 0 4px 20px rgba(0,102,204,0.25);
+  background-color: #f0f7ff;
+}
+
+.pool-card h3 {
+  font-size: 0.875rem;
+  color: #666;
+  margin: 0;
+  word-break: break-word;
+}
+
+.pool-card .value {
+  font-size: 2rem;
+  font-weight: 600;
+  color: #0066cc;
+}
+
+.pool-card .value.low { color: #22c55e; }
+.pool-card .value.medium { color: #eab308; }
+.pool-card .value.high { color: #ef4444; }
+
+.last-updated {
+  color: #888;
+  font-size: 0.75rem;
+  margin-top: 0.25rem;
+  flex-shrink: 0;
+}
+
+.loading {
+  text-align: center;
+  padding: 2rem;
+  color: #666;
+}
+
+@media (max-width: 600px) {
+  main {
+    padding: 1rem;
+  }
+  
+  .controls {
+    flex-wrap: wrap;
+  }
+  
+  .chart-container {
+    flex: 1 1 40%;
+    min-height: 180px;
+  }
+  
+  .pool-list {
+    max-height: calc(100vh - 400px);
+  }
+}
