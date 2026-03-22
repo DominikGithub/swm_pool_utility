@@ -169,6 +169,7 @@ func isSauna(name string) bool {
 		"sauna", "Sauna", "SAUNA",
 		"dampf", "Dampf",
 		"thermal", "Thermal",
+		"dantebad", "DanteBad",					// TODO fix html selector for h2 id=bath-capacity-by-location "Echtzeit-Auslastung der Bäder" > ul
 	}
 	for _, kw := range saunaKeywords {
 		if strings.Contains(strings.ToLower(name), strings.ToLower(kw)) {
