@@ -9,13 +9,13 @@
         <option v-for="pool in pools" :key="pool" :value="pool">{{ pool }}</option>
       </select>
       <select v-model="selectedDays" @change="fetchData">
-        <option :value="0">All data</option>
         <option :value="1">Last 24 hours</option>
         <option :value="3">Last 3 days</option>
         <option :value="7">Last 7 days</option>
         <option :value="14">Last 14 days</option>
         <option :value="30">Last 30 days</option>
         <option :value="90">Last 90 days</option>
+        <option :value="0">All data</option>
       </select>
       <button @click="fetchData">Refresh</button>
     </div>
@@ -50,7 +50,7 @@ import { fetchPools, fetchHistory } from './composables/api'
 const pools = ref([])
 const historyData = ref([])
 const selectedPool = ref('')
-const selectedDays = ref(7)
+const selectedDays = ref(1)
 const loading = ref(true)
 const lastUpdated = ref('')
 const hoveredPool = ref(null)
