@@ -1,5 +1,5 @@
 <template>
-  <div class="pool-card" :class="{ hovered: isHovered, favorite: isFavorite }">
+  <div class="pool-card" :class="{ favorite: isFavorite }">
     <div class="card-header">
       <h3>{{ pool.name }}</h3>
       <button class="star-btn" :class="{ active: isFavorite }" @click.stop="$emit('toggleFavorite')">
@@ -19,10 +19,6 @@ const props = defineProps({
   pool: {
     type: Object,
     required: true
-  },
-  isHovered: {
-    type: Boolean,
-    default: false
   },
   isFavorite: {
     type: Boolean,
@@ -51,6 +47,10 @@ const levelClass = computed(() => {
 .card-header h3 {
   flex: 1;
   min-width: 0;
+  overflow-wrap: break-word;
+  hyphens: none;
+  white-space: normal;
+  word-break: keep-all;
 }
 
 .star-btn {

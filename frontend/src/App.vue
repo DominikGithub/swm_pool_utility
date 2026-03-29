@@ -23,15 +23,14 @@
     <div v-if="loading" class="loading">Loading...</div>
     <template v-else>
       <div class="chart-container">
-        <PoolChart :data="chartData" @hover="hoveredPool = $event" @leave="hoveredPool = null" />
+        <PoolChart :data="chartData" @hoverData="hoverData = $event" />
       </div>
       
       <div class="pool-list">
         <PoolCard 
           v-for="pool in currentPools" 
           :key="pool.name" 
-          :pool="pool"
-          :isHovered="hoveredPool === pool.name"
+          :pool="getPoolWithValue(pool)"
           :isFavorite="favorite === pool.name"
           @toggleFavorite="toggleFavorite(pool.name)"
         />
@@ -52,9 +51,8 @@ const historyData = ref([])
 const selectedPool = ref('')
 const selectedDays = ref(1)
 const loading = ref(true)
-const lastUpdated = ref('')
-const hoveredPool = ref(null)
 const favorite = ref('')
+const hoverData = ref(null)
 
 function getCookie(name) {
   const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'))
@@ -88,6 +86,13 @@ function formatTimestamp(isoString) {
   })
 }
 
+function getPoolWithValue(pool) {
+  if (hoverData.value && hoverData.value[pool.name] !== undefined) {
+    return { ...pool, utility: hoverData.value[pool.name] }
+  }
+  return pool
+}
+
 const currentPools = computed(() => {
   if (!historyData.value.length) return []
   
@@ -96,7 +101,7 @@ const currentPools = computed(() => {
   reversed.forEach(item => {
     if (!poolMap.has(item.name)) {
       const utilization = Math.max(0, 100 - item.utility)
-      poolMap.set(item.name, { name: item.name, utility: utilization, timestamp: item.timestamp })
+      poolMap.set(item.name, { name: item.name, utility: utilization })
     }
   })
   return Array.from(poolMap.values()).slice(0, 12)
@@ -145,9 +150,6 @@ async function fetchData() {
     params.set('days', selectedDays.value)
     
     historyData.value = await fetchHistory(params.toString())
-    if (historyData.value.length) {
-      lastUpdated.value = formatTimestamp(historyData.value[historyData.value.length - 1].timestamp)
-    }
   } catch (err) {
     console.error('Failed to fetch data:', err)
   }
