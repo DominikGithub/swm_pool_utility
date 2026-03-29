@@ -2,7 +2,7 @@
 
 Monitoring of historical SWM pool utilization. 
 
-[![Pool Dashboard](res/pool_dashboard_20260323.png)](http://grid.resolve.bar:8086/)
+[![Pool Dashboard](res/pool_dashboard_20260329.png)](http://grid.resolve.bar:8086/)
 
 
 ## Services
