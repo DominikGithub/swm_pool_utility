@@ -18,12 +18,15 @@
         <option :value="0">All data</option>
       </select>
       <button @click="fetchData">Refresh</button>
+      <button @click="toggleWeather" :class="{ active: showWeather }">
+        {{ showWeather ? 'Hide Weather' : 'Show Weather' }}
+      </button>
     </div>
 
     <div v-if="loading" class="loading">Loading...</div>
     <template v-else>
       <div class="chart-container">
-        <PoolChart :data="chartData" @hoverData="hoverData = $event" />
+        <PoolChart :data="chartData" :weatherData="showWeather ? weatherData : []" @hoverData="hoverData = $event" />
       </div>
       
       <div class="pool-list">
@@ -44,15 +47,17 @@
 import { ref, computed, onMounted } from 'vue'
 import PoolChart from './components/PoolChart.vue'
 import PoolCard from './components/PoolCard.vue'
-import { fetchPools, fetchHistory } from './composables/api'
+import { fetchPools, fetchHistory, fetchWeather } from './composables/api'
 
 const pools = ref([])
 const historyData = ref([])
+const weatherData = ref([])
 const selectedPool = ref('')
 const selectedDays = ref(1)
 const loading = ref(true)
 const favorite = ref('')
 const hoverData = ref(null)
+const showWeather = ref(false)
 
 function getCookie(name) {
   const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'))
@@ -149,11 +154,33 @@ async function fetchData() {
     if (selectedPool.value) params.set('pool', selectedPool.value)
     params.set('days', selectedDays.value)
     
-    historyData.value = await fetchHistory(params.toString())
+    const weatherParams = new URLSearchParams()
+    weatherParams.set('days', selectedDays.value)
+    
+    const [history, weather] = await Promise.all([
+      fetchHistory(params.toString()),
+      fetchWeather(weatherParams.toString())
+    ])
+    
+    historyData.value = history
+    weatherData.value = showWeather.value ? weather : []
   } catch (err) {
     console.error('Failed to fetch data:', err)
   }
   loading.value = false
+}
+
+async function toggleWeather() {
+  showWeather.value = !showWeather.value
+  if (showWeather.value && weatherData.value.length === 0) {
+    try {
+      const weatherParams = new URLSearchParams()
+      weatherParams.set('days', selectedDays.value)
+      weatherData.value = await fetchWeather(weatherParams.toString())
+    } catch (err) {
+      console.error('Failed to fetch weather:', err)
+    }
+  }
 }
 
 onMounted(async () => {
