@@ -255,16 +255,17 @@ function updateHover(clientX) {
   let dataIndex = Math.round(normalizedValue * (dataCount - 1))
   dataIndex = Math.max(0, Math.min(dataIndex, dataCount - 1))
 
-  if (chart.data.labels && chart.data.labels[dataIndex]) {
-    const fullLabel = chart.data.labels[dataIndex]
+  const values = {}
+  if (localData.value.labels && localData.value.labels[dataIndex]) {
+    const fullLabel = localData.value.labels[dataIndex]
     const timePart = fullLabel.split(', ')[1] || fullLabel
     hoverLabel.value = timePart
   }
 
-  const values = {}
   localData.value.datasets?.forEach(ds => {
-    if (ds.data && ds.data[dataIndex]) {
-      values[ds.label] = ds.data[dataIndex].y
+    if (ds.data && ds.data[dataIndex] !== undefined) {
+      const point = ds.data[dataIndex]
+      values[ds.label] = typeof point === 'object' && point !== null ? point.y : point
     }
   })
   emit('hoverData', values)
