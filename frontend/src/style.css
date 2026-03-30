@@ -115,6 +115,16 @@ button.active {
   box-shadow: 0 4px 12px rgba(34, 197, 94, 0.25);
 }
 
+.weather-btn {
+  padding: 0.6rem 0.75rem;
+  min-width: auto;
+}
+
+.weather-btn .weather-icon {
+  font-size: 1rem;
+  line-height: 1;
+}
+
 .chart-container {
   flex: 1 1 50%;
   background: white;

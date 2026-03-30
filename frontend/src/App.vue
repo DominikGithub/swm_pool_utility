@@ -11,15 +11,13 @@
       <select v-model="selectedDays" @change="fetchData">
         <option :value="1">Last 24 hours</option>
         <option :value="3">Last 3 days</option>
-        <option :value="7">Last 7 days</option>
-        <option :value="14">Last 14 days</option>
-        <option :value="30">Last 30 days</option>
-        <option :value="90">Last 90 days</option>
-        <option :value="0">All data</option>
+        <option :value="7">Last week</option>
+        <option :value="14">Last 2 weeks</option>
+        <option :value="30">Last month</option>
       </select>
       <button @click="fetchData">Refresh</button>
-      <button @click="toggleWeather" :class="{ active: showWeather }">
-        {{ showWeather ? 'Hide Weather' : 'Show Weather' }}
+      <button @click="toggleWeather" :class="{ active: showWeather }" class="weather-btn">
+        <span class="weather-icon">{{ showWeather ? '🌤️' : '☁️' }}</span>
       </button>
     </div>
 
@@ -57,7 +55,7 @@ const selectedDays = ref(1)
 const loading = ref(true)
 const favorite = ref('')
 const hoverData = ref(null)
-const showWeather = ref(false)
+const showWeather = ref(localStorage.getItem('swm_showWeather') === 'true')
 
 function getCookie(name) {
   const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'))
@@ -124,11 +122,20 @@ const chartData = computed(() => {
     filtered = historyData.value.filter(d => new Date(d.timestamp) >= cutoff)
   }
   
+  const labelSet = new Set()
   const poolGroups = {}
   filtered.forEach(item => {
+    const label = formatTimestamp(item.timestamp)
+    labelSet.add(label)
     if (!poolGroups[item.name]) poolGroups[item.name] = []
     const utilization = Math.max(0, 100 - item.utility)
-    poolGroups[item.name].push({ x: formatTimestamp(item.timestamp), y: utilization })
+    poolGroups[item.name].push({ x: label, y: utilization })
+  })
+
+  const labels = Array.from(labelSet).sort((a, b) => {
+    const dateA = new Date(a.split(', ')[0].split('.').reverse().join('-') + 'T' + a.split(', ')[1])
+    const dateB = new Date(b.split(', ')[0].split('.').reverse().join('-') + 'T' + b.split(', ')[1])
+    return dateA - dateB
   })
 
   const colors = [
@@ -144,7 +151,7 @@ const chartData = computed(() => {
     fill: false
   }))
 
-  return { datasets }
+  return { labels, datasets }
 })
 
 async function fetchData() {
@@ -172,6 +179,7 @@ async function fetchData() {
 
 async function toggleWeather() {
   showWeather.value = !showWeather.value
+  localStorage.setItem('swm_showWeather', showWeather.value)
   if (showWeather.value && weatherData.value.length === 0) {
     try {
       const weatherParams = new URLSearchParams()
@@ -188,5 +196,14 @@ onMounted(async () => {
   favorite.value = getCookie('swm_favorite') || ''
   selectedPool.value = favorite.value
   await fetchData()
+  if (showWeather.value && weatherData.value.length === 0) {
+    try {
+      const weatherParams = new URLSearchParams()
+      weatherParams.set('days', selectedDays.value)
+      weatherData.value = await fetchWeather(weatherParams.toString())
+    } catch (err) {
+      console.error('Failed to fetch weather:', err)
+    }
+  }
 })
 </script>

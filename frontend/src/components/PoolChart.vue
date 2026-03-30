@@ -9,7 +9,7 @@
     @touchend="handleTouchEnd"
   >
     <Line ref="chartRef" :data="localData" :options="localOptions" />
-    <div class="weather-icons" v-if="weatherData.length > 0">
+    <div class="weather-icons" v-if="props.weatherData && props.weatherData.length > 0">
       <div 
         v-for="(icon, index) in weatherIcons" 
         :key="index"
@@ -37,7 +37,7 @@
 </template>
 
 <script setup>
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, nextTick } from 'vue'
 import { Line } from 'vue-chartjs'
 import {
   Chart as ChartJS,
@@ -71,34 +71,54 @@ const hoverLabel = ref('')
 const isVisible = ref(false)
 const localData = ref(props.data)
 const isTouching = ref(false)
+const pendingWeatherUpdate = ref(false)
 
 const weatherIcons = computed(() => {
   if (!props.weatherData || props.weatherData.length === 0) return []
   
   const chart = chartRef.value?.chart
-  if (!chart || !chart.data.labels || chart.data.labels.length === 0) return []
+  if (!chart || !chart.scales?.x || !localData.value.labels || localData.value.labels.length === 0) return []
   
-  const labels = chart.data.labels
+  const labels = localData.value.labels
+  const xScale = chart.scales.x
+  
+  const chartLeft = xScale.left
+  const chartRight = xScale.right
+  const chartWidth = chartRight - chartLeft
+  
+  if (chartWidth <= 0) return []
+  
+  const wrapperWidth = wrapperRef.value?.offsetWidth || 1
+  
   const icons = []
   const step = Math.max(1, Math.floor(labels.length / 10))
   
   for (let i = 0; i < labels.length; i += step) {
     const weather = findNearestWeather(labels[i])
     if (weather) {
-      icons.push({
-        x: (i / (labels.length - 1)) * 100,
-        type: weather.weather_type,
-        highWind: weather.wind_speed > 15,
-        opacity: 0.5,
-        title: `${weather.temperature}°C, ${weather.wind_speed} km/h`
-      })
+      const normalizedPos = labels.length > 1 ? i / (labels.length - 1) : 0
+      const pixelPos = chartLeft + normalizedPos * chartWidth
+      const percentFromWrapper = (pixelPos / wrapperWidth) * 100
+      
+      const minPercent = (chartLeft / wrapperWidth) * 100 + 0.5
+      const maxPercent = (chartRight / wrapperWidth) * 100 - 0.5
+      
+      if (percentFromWrapper > minPercent && percentFromWrapper < maxPercent) {
+        icons.push({
+          x: percentFromWrapper,
+          type: weather.weather_type,
+          highWind: weather.wind_speed > 15,
+          opacity: 0.5,
+          title: `${weather.temperature}°C, ${weather.wind_speed} km/h`
+        })
+      }
     }
   }
   
   return icons
 })
 
-function findNearestWeather(label) {
+function findNearestWeather(label, maxDiffMs = 45 * 60 * 1000) {
   if (!props.weatherData || props.weatherData.length === 0) return null
   
   const labelDate = parseChartLabel(label)
@@ -110,7 +130,7 @@ function findNearestWeather(label) {
   props.weatherData.forEach(w => {
     const wDate = new Date(w.timestamp)
     const diff = Math.abs(wDate.getTime() - labelDate.getTime())
-    if (diff < minDiff && diff < 45 * 60 * 1000) {
+    if (diff < minDiff && diff < maxDiffMs) {
       minDiff = diff
       nearest = w
     }
@@ -134,15 +154,27 @@ function parseChartLabel(label) {
 
 watch(() => props.data, (newData) => {
   localData.value = newData
+  if (props.weatherData && props.weatherData.length > 0) {
+    pendingWeatherUpdate.value = true
+  }
 }, { deep: true })
 
-watch(() => props.weatherData, (newWeather) => {
+watch(() => props.weatherData, async (newWeather) => {
+  await nextTick()
   updateWeatherDatasets(newWeather)
 }, { deep: true })
 
+watch(pendingWeatherUpdate, async (pending) => {
+  if (pending && props.weatherData && props.weatherData.length > 0) {
+    await nextTick()
+    updateWeatherDatasets(props.weatherData)
+    pendingWeatherUpdate.value = false
+  }
+})
+
 function updateWeatherDatasets(weatherData) {
   const chart = chartRef.value?.chart
-  if (!chart || !chart.data) return
+  if (!chart) return
 
   const existingWeatherIndices = []
   chart.data.datasets.forEach((ds, i) => {
@@ -162,10 +194,10 @@ function updateWeatherDatasets(weatherData) {
 
   const tempData = []
   const windData = []
-  const labels = chart.data.labels || []
+  const labels = localData.value.labels || []
 
   labels.forEach(label => {
-    const weather = findNearestWeather(label)
+    const weather = findNearestWeather(label, 120)
     if (weather) {
       const normalizedTemp = ((weather.temperature + 10) / 35) * 100
       tempData.push({ x: label, y: Math.max(0, Math.min(100, normalizedTemp)) })
@@ -211,13 +243,13 @@ function updateWeatherDatasets(weatherData) {
 function getChartX(clientX) {
   const chart = chartRef.value?.chart
   
-  if (!chart || !chart.scales?.x || !wrapperRef.value) return null
+  if (!chart || !chart.chartArea || !wrapperRef.value) return null
 
   const wrapperRect = wrapperRef.value.getBoundingClientRect()
-  const xAxis = chart.scales.x
+  const chartArea = chart.chartArea
   
-  const chartLeft = wrapperRect.left + xAxis.left
-  const chartRight = wrapperRect.left + xAxis.right
+  const chartLeft = wrapperRect.left + chartArea.left + 17
+  const chartRight = wrapperRect.left + chartArea.right + 9
   
   if (clientX < chartLeft || clientX > chartRight) return null
 
@@ -237,7 +269,8 @@ function updateHover(clientX) {
   const chart = chartRef.value?.chart
   if (!chart) return
 
-  const dataCount = chart.data.labels?.length || 0
+  const labels = localData.value.labels
+  const dataCount = labels?.length || 0
   if (dataCount === 0) {
     isVisible.value = false
     emit('hoverData', null)
@@ -255,13 +288,13 @@ function updateHover(clientX) {
   let dataIndex = Math.round(normalizedValue * (dataCount - 1))
   dataIndex = Math.max(0, Math.min(dataIndex, dataCount - 1))
 
-  const values = {}
-  if (localData.value.labels && localData.value.labels[dataIndex]) {
-    const fullLabel = localData.value.labels[dataIndex]
+  const fullLabel = labels[dataIndex]
+  if (fullLabel) {
     const timePart = fullLabel.split(', ')[1] || fullLabel
     hoverLabel.value = timePart
   }
 
+  const values = {}
   localData.value.datasets?.forEach(ds => {
     if (ds.data && ds.data[dataIndex] !== undefined) {
       const point = ds.data[dataIndex]
