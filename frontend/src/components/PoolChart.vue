@@ -37,7 +37,7 @@
 </template>
 
 <script setup>
-import { ref, watch, computed, nextTick } from 'vue'
+import { ref, watch, computed, onMounted, nextTick } from 'vue'
 import { Line } from 'vue-chartjs'
 import {
   Chart as ChartJS,
@@ -71,7 +71,6 @@ const hoverLabel = ref('')
 const isVisible = ref(false)
 const localData = ref(props.data)
 const isTouching = ref(false)
-const pendingWeatherUpdate = ref(false)
 
 const weatherIcons = computed(() => {
   if (!props.weatherData || props.weatherData.length === 0) return []
@@ -140,7 +139,7 @@ function findNearestWeather(label, maxDiffMs = 45 * 60 * 1000) {
 }
 
 function parseChartLabel(label) {
-  const match = label.match(/(\d{2})\.(\d{2})\.,\s*(\d{2}):(\d{2})/)
+  let match = label.match(/(\d{2})\.(\d{2})\.,\s*(\d{2}):(\d{2})/)
   if (match) {
     const now = new Date()
     const day = parseInt(match[1])
@@ -149,107 +148,121 @@ function parseChartLabel(label) {
     const minute = parseInt(match[4])
     return new Date(now.getFullYear(), month, day, hour, minute)
   }
+  match = label.match(/(\d{2})\.(\d{2})\.(\d{4}),\s*(\d{2}):(\d{2})/)
+  if (match) {
+    const day = parseInt(match[1])
+    const month = parseInt(match[2]) - 1
+    const year = parseInt(match[3])
+    const hour = parseInt(match[4])
+    const minute = parseInt(match[5])
+    return new Date(year, month, day, hour, minute)
+  }
   return null
 }
 
 watch(() => props.data, (newData) => {
   localData.value = newData
   if (props.weatherData && props.weatherData.length > 0) {
-    pendingWeatherUpdate.value = true
+    nextTick(() => updateWeatherDatasets(props.weatherData))
   }
 }, { deep: true })
 
-watch(() => props.weatherData, async (newWeather) => {
-  await nextTick()
-  updateWeatherDatasets(newWeather)
+watch(() => props.weatherData, (newWeather) => {
+  updateWeatherDatasets(newWeather || [])
 }, { deep: true })
 
-watch(pendingWeatherUpdate, async (pending) => {
-  if (pending && props.weatherData && props.weatherData.length > 0) {
-    await nextTick()
-    updateWeatherDatasets(props.weatherData)
-    pendingWeatherUpdate.value = false
-  }
+onMounted(() => {
+  nextTick(() => {
+    if (props.weatherData && props.weatherData.length > 0) {
+      updateWeatherDatasets(props.weatherData)
+    }
+  })
 })
 
 function updateWeatherDatasets(weatherData) {
   const chart = chartRef.value?.chart
   if (!chart) return
 
-  const existingWeatherIndices = []
-  chart.data.datasets.forEach((ds, i) => {
-    if (ds._weather) {
-      existingWeatherIndices.push(i)
+  for (let i = chart.data.datasets.length - 1; i >= 0; i--) {
+    if (chart.data.datasets[i]._weather) {
+      chart.data.datasets.splice(i, 1)
     }
-  })
-
-  existingWeatherIndices.reverse().forEach(i => {
-    chart.data.datasets.splice(i, 1)
-  })
+  }
 
   if (!weatherData || weatherData.length === 0) {
-    chart.update('none')
+    chart.update()
     return
   }
 
+  const labels = localData.value.labels || []
+  if (labels.length === 0) return
+
+  let lastTemp = null
+  let lastWind = null
   const tempData = []
   const windData = []
-  const labels = localData.value.labels || []
 
   labels.forEach(label => {
-    const weather = findNearestWeather(label, 120)
+    const weather = findNearestWeather(label, 360)
     if (weather) {
-      const normalizedTemp = ((weather.temperature + 10) / 35) * 100
+      lastTemp = weather.temperature
+      lastWind = weather.wind_speed
+    }
+    if (lastTemp !== null) {
+      const normalizedTemp = ((lastTemp + 10) / 45) * 100
       tempData.push({ x: label, y: Math.max(0, Math.min(100, normalizedTemp)) })
-      const normalizedWind = (weather.wind_speed / 50) * 100
+    }
+    if (lastWind !== null) {
+      const normalizedWind = (lastWind / 60) * 100
       windData.push({ x: label, y: Math.max(0, Math.min(100, normalizedWind)) })
-    } else {
-      tempData.push(null)
-      windData.push(null)
     }
   })
 
-  chart.data.datasets.push({
-    label: 'Temperature',
-    data: tempData,
-    borderColor: 'rgba(255, 140, 0, 0.4)',
-    backgroundColor: 'transparent',
-    borderWidth: 1.5,
-    borderDash: [4, 4],
-    tension: 0.3,
-    fill: false,
-    pointRadius: 0,
-    yAxisID: 'y',
-    _weather: true
-  })
+  if (tempData.length > 0) {
+    chart.data.datasets.push({
+      label: 'Temperature',
+      data: tempData,
+      borderColor: 'rgba(255, 140, 0, 0.6)',
+      backgroundColor: 'transparent',
+      borderWidth: 2,
+      borderDash: [5, 5],
+      tension: 0.3,
+      fill: false,
+      pointRadius: 0,
+      yAxisID: 'y',
+      _weather: true
+    })
+  }
 
-  chart.data.datasets.push({
-    label: 'Wind',
-    data: windData,
-    borderColor: 'rgba(100, 116, 139, 0.4)',
-    backgroundColor: 'transparent',
-    borderWidth: 1.5,
-    borderDash: [2, 2],
-    tension: 0.3,
-    fill: false,
-    pointRadius: 0,
-    yAxisID: 'y',
-    _weather: true
-  })
+  if (windData.length > 0) {
+    chart.data.datasets.push({
+      label: 'Wind',
+      data: windData,
+      borderColor: 'rgba(100, 116, 139, 0.6)',
+      backgroundColor: 'transparent',
+      borderWidth: 2,
+      borderDash: [5, 5],
+      tension: 0.3,
+      fill: false,
+      pointRadius: 0,
+      yAxisID: 'y',
+      _weather: true
+    })
+  }
 
-  chart.update('none')
+  chart.update()
 }
 
 function getChartX(clientX) {
   const chart = chartRef.value?.chart
   
-  if (!chart || !chart.chartArea || !wrapperRef.value) return null
+  if (!chart || !chart.scales?.x || !wrapperRef.value) return null
 
   const wrapperRect = wrapperRef.value.getBoundingClientRect()
-  const chartArea = chart.chartArea
+  const xAxis = chart.scales.x
   
-  const chartLeft = wrapperRect.left + chartArea.left + 17
-  const chartRight = wrapperRect.left + chartArea.right + 9
+  const chartLeft = wrapperRect.left + xAxis.left
+  const chartRight = wrapperRect.left + xAxis.right
   
   if (clientX < chartLeft || clientX > chartRight) return null
 
@@ -281,10 +294,9 @@ function updateHover(clientX) {
   isVisible.value = true
 
   const xAxis = chart.scales.x
-  const canvas = chart.canvas
-  const canvasRect = canvas.getBoundingClientRect()
-  const canvasRelativeX = clientX - canvasRect.left
-  const normalizedValue = (canvasRelativeX - xAxis.left) / xAxis.width
+  const wrapperRect = wrapperRef.value.getBoundingClientRect()
+  const canvasRelativeX = clientX - wrapperRect.left
+  const normalizedValue = (canvasRelativeX - xAxis.left) / (xAxis.right - xAxis.left)
   let dataIndex = Math.round(normalizedValue * (dataCount - 1))
   dataIndex = Math.max(0, Math.min(dataIndex, dataCount - 1))
 

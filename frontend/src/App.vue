@@ -170,7 +170,7 @@ async function fetchData() {
     ])
     
     historyData.value = history
-    weatherData.value = showWeather.value ? weather : []
+    weatherData.value = weather
   } catch (err) {
     console.error('Failed to fetch data:', err)
   }
