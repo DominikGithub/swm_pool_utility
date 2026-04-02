@@ -2,7 +2,7 @@
 
 A monitoring application that tracks historical pool utilization from SWM (Stadtwerke München) swimming pools and correlates it with weather conditions. The dashboard provides insights into how weather affects pool attendance.
 
-![Pool Dashboard](res/pool_dashboard_20260329.png)
+![Pool Dashboard](res/pool_dashboard_20260329.png)(http://grid.resolve.bar:8086/)
 
 
 ## Services
