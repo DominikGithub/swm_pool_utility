@@ -24,7 +24,7 @@
     <div v-if="loading" class="loading">Loading...</div>
     <template v-else>
       <div class="chart-container">
-        <PoolChart :data="chartData" :weatherData="showWeather ? weatherData : []" @hoverData="hoverData = $event" />
+        <PoolChart :data="chartData" :weatherData="chartWeatherData" @hoverData="onHoverData" />
       </div>
       
       <div class="pool-list">
@@ -35,6 +35,7 @@
           :isFavorite="favorite === pool.name"
           @toggleFavorite="toggleFavorite(pool.name)"
         />
+        <WeatherCard v-if="showWeather" :weather="currentWeather" />
       </div>
       
     </template>
@@ -45,6 +46,7 @@
 import { ref, computed, onMounted } from 'vue'
 import PoolChart from './components/PoolChart.vue'
 import PoolCard from './components/PoolCard.vue'
+import WeatherCard from './components/WeatherCard.vue'
 import { fetchPools, fetchHistory, fetchWeather } from './composables/api'
 
 const pools = ref([])
@@ -55,7 +57,26 @@ const selectedDays = ref(1)
 const loading = ref(true)
 const favorite = ref('')
 const hoverData = ref(null)
+const hoverInfo = ref(null)
 const showWeather = ref(localStorage.getItem('swm_showWeather') === 'true')
+
+const emptyWeather = []
+
+const chartWeatherData = computed(() => {
+  return showWeather.value ? weatherData.value : emptyWeather
+})
+
+const currentWeather = computed(() => {
+  if (!showWeather.value) return null
+  if (hoverInfo.value?.weather) return hoverInfo.value.weather
+  if (weatherData.value.length > 0) return weatherData.value[weatherData.value.length - 1]
+  return null
+})
+
+function onHoverData(values, info) {
+  hoverData.value = values
+  hoverInfo.value = info
+}
 
 function getCookie(name) {
   const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'))

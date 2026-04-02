@@ -1,15 +1,7 @@
 <template>
-  <div 
-    class="chart-wrapper" 
-    ref="wrapperRef"
-    @mousemove="handleMouseMove"
-    @mouseleave="handleMouseLeave"
-    @touchstart.prevent="handleTouchStart"
-    @touchmove.prevent="handleTouchMove"
-    @touchend="handleTouchEnd"
-  >
-    <Line ref="chartRef" :data="localData" :options="localOptions" />
-    <div class="weather-icons" v-if="props.weatherData && props.weatherData.length > 0">
+  <div class="chart-wrapper" ref="wrapperRef">
+    <canvas ref="canvasRef"></canvas>
+    <div class="weather-icons" v-if="weatherIcons.length > 0">
       <div 
         v-for="(icon, index) in weatherIcons" 
         :key="index"
@@ -26,31 +18,33 @@
         <span v-else-if="icon.type === 'thunderstorm'">⛈️</span>
       </div>
     </div>
-    <div 
-      v-if="isVisible" 
-      class="crosshair" 
-      :style="{ left: crosshairX + 'px' }"
-    >
-      <div class="crosshair-label">{{ hoverLabel }}</div>
-    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, watch, computed, onMounted, nextTick } from 'vue'
-import { Line } from 'vue-chartjs'
+import { ref, watch, onMounted, nextTick, onBeforeUnmount } from 'vue'
 import {
-  Chart as ChartJS,
+  Chart,
   CategoryScale,
   LinearScale,
   PointElement,
   LineElement,
+  LineController,
   Title,
   Tooltip,
-  Legend
+  Filler
 } from 'chart.js'
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend)
+Chart.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  LineController,
+  Title,
+  Tooltip,
+  Filler
+)
 
 const props = defineProps({
   data: {
@@ -64,58 +58,90 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['hoverData'])
-const chartRef = ref(null)
+const canvasRef = ref(null)
 const wrapperRef = ref(null)
-const crosshairX = ref(0)
-const hoverLabel = ref('')
-const isVisible = ref(false)
-const localData = ref(props.data)
-const isTouching = ref(false)
+const weatherIcons = ref([])
 
-const weatherIcons = computed(() => {
-  if (!props.weatherData || props.weatherData.length === 0) return []
-  
-  const chart = chartRef.value?.chart
-  if (!chart || !chart.scales?.x || !localData.value.labels || localData.value.labels.length === 0) return []
-  
-  const labels = localData.value.labels
-  const xScale = chart.scales.x
-  
-  const chartLeft = xScale.left
-  const chartRight = xScale.right
-  const chartWidth = chartRight - chartLeft
-  
-  if (chartWidth <= 0) return []
-  
-  const wrapperWidth = wrapperRef.value?.offsetWidth || 1
-  
-  const icons = []
-  const step = Math.max(1, Math.floor(labels.length / 10))
-  
-  for (let i = 0; i < labels.length; i += step) {
-    const weather = findNearestWeather(labels[i])
-    if (weather) {
-      const normalizedPos = labels.length > 1 ? i / (labels.length - 1) : 0
-      const pixelPos = chartLeft + normalizedPos * chartWidth
-      const percentFromWrapper = (pixelPos / wrapperWidth) * 100
-      
-      const minPercent = (chartLeft / wrapperWidth) * 100 + 0.5
-      const maxPercent = (chartRight / wrapperWidth) * 100 - 0.5
-      
-      if (percentFromWrapper > minPercent && percentFromWrapper < maxPercent) {
-        icons.push({
-          x: percentFromWrapper,
-          type: weather.weather_type,
-          highWind: weather.wind_speed > 15,
-          opacity: 0.5,
-          title: `${weather.temperature}°C, ${weather.wind_speed} km/h`
-        })
+let chart = null
+
+const crosshairPlugin = {
+  id: 'crosshair',
+  afterDraw(chart) {
+    const tooltip = chart.tooltip
+    if (!tooltip || tooltip.opacity === 0) return
+
+    const x = tooltip.caretX
+    const yScale = chart.scales.y
+    if (!yScale) return
+
+    const ctx = chart.ctx
+    ctx.save()
+
+    // Draw vertical line
+    ctx.beginPath()
+    ctx.moveTo(x, yScale.top)
+    ctx.lineTo(x, yScale.bottom)
+    ctx.lineWidth = 1
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)'
+    ctx.stroke()
+
+    // Draw time-only label at top of line
+    const label = tooltip.dataPoints?.[0]?.label
+    if (label) {
+      const timeMatch = label.match(/(\d{2}:\d{2})/)
+      const timeStr = timeMatch ? timeMatch[1] : label
+
+      ctx.font = '10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'bottom'
+      const textWidth = ctx.measureText(timeStr).width
+      const padding = 4
+      const boxWidth = textWidth + padding * 2
+      const boxHeight = 16
+      const boxY = yScale.top - boxHeight - 2
+
+      // Clamp horizontally to stay within chart area
+      const xScale = chart.scales.x
+      let boxX = x - boxWidth / 2
+      if (xScale) {
+        if (boxX < xScale.left) boxX = xScale.left
+        if (boxX + boxWidth > xScale.right) boxX = xScale.right - boxWidth
       }
+
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.75)'
+      ctx.beginPath()
+      ctx.roundRect(boxX, boxY, boxWidth, boxHeight, 3)
+      ctx.fill()
+
+      ctx.fillStyle = '#fff'
+      ctx.textAlign = 'left'
+      ctx.fillText(timeStr, boxX + padding, boxY + boxHeight - 3)
     }
+
+    ctx.restore()
   }
-  
-  return icons
-})
+}
+
+const tempLabelPlugin = {
+  id: 'tempLabel',
+  afterDraw(chart) {
+    const tempDs = chart.data.datasets.find(ds => ds._weather && ds.label === 'Temperature')
+    if (!tempDs || !tempDs.data || tempDs.data.length === 0) return
+
+    const yScale = chart.scales.y
+    const xScale = chart.scales.x
+    if (!yScale || !xScale) return
+
+    const ctx = chart.ctx
+    ctx.save()
+    ctx.font = '9px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+    ctx.fillStyle = 'rgba(200, 120, 20, 0.45)'
+    ctx.textAlign = 'right'
+    ctx.textBaseline = 'bottom'
+    ctx.fillText('Temperature', xScale.right - 4, yScale.bottom - 4)
+    ctx.restore()
+  }
+}
 
 function findNearestWeather(label, maxDiffMs = 45 * 60 * 1000) {
   if (!props.weatherData || props.weatherData.length === 0) return null
@@ -160,27 +186,175 @@ function parseChartLabel(label) {
   return null
 }
 
-watch(() => props.data, (newData) => {
-  localData.value = newData
-  if (props.weatherData && props.weatherData.length > 0) {
-    nextTick(() => updateWeatherDatasets(props.weatherData))
+function updateWeatherIcons() {
+  if (!chart || !chart.scales?.x || !props.data.labels || props.data.labels.length === 0) {
+    weatherIcons.value = []
+    return
   }
-}, { deep: true })
+  
+  const labels = props.data.labels
+  const xScale = chart.scales.x
+  const chartLeft = xScale.left
+  const chartRight = xScale.right
+  const chartWidth = chartRight - chartLeft
+  
+  if (chartWidth <= 0) {
+    weatherIcons.value = []
+    return
+  }
+  
+  const wrapperWidth = wrapperRef.value?.offsetWidth || 1
+  
+  const icons = []
+  const step = Math.max(1, Math.floor(labels.length / 10))
+  
+  for (let i = 0; i < labels.length; i += step) {
+    const weather = findNearestWeather(labels[i])
+    if (weather) {
+      const normalizedPos = labels.length > 1 ? i / (labels.length - 1) : 0
+      const pixelPos = chartLeft + normalizedPos * chartWidth
+      const percentFromWrapper = (pixelPos / wrapperWidth) * 100
+      
+      const minPercent = (chartLeft / wrapperWidth) * 100 + 0.5
+      const maxPercent = (chartRight / wrapperWidth) * 100 - 0.5
+      
+      if (percentFromWrapper > minPercent && percentFromWrapper < maxPercent) {
+        let iconType = weather.weather_type
+        let title = `${weather.temperature}°C, ${weather.wind_speed} km/h, ${weather.cloud_cover}% clouds`
+        
+        if (weather.cloud_cover > 70 && hasHighCloudsForHours(i, labels, 3)) {
+          iconType = 'cloudy'
+          title += ' (overcast 3+ hours)'
+        }
+        
+        icons.push({
+          x: percentFromWrapper,
+          type: iconType,
+          highWind: weather.wind_speed > 15,
+          opacity: 0.5,
+          title: title
+        })
+      }
+    }
+  }
+  
+  weatherIcons.value = icons
+}
 
-watch(() => props.weatherData, (newWeather) => {
-  updateWeatherDatasets(newWeather || [])
-}, { deep: true })
+function hasHighCloudsForHours(index, labels, minHours) {
+  let count = 0
+  for (let i = index; i < labels.length; i++) {
+    const weather = findNearestWeather(labels[i], 360)
+    if (weather && weather.cloud_cover > 70) {
+      count++
+    } else {
+      break
+    }
+  }
+  return count >= minHours
+}
 
-onMounted(() => {
-  nextTick(() => {
-    if (props.weatherData && props.weatherData.length > 0) {
-      updateWeatherDatasets(props.weatherData)
+function createChart() {
+  if (!canvasRef.value || !props.data.labels) return
+
+  const ctx = canvasRef.value.getContext('2d')
+  
+  if (chart) {
+    chart.destroy()
+  }
+
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: JSON.parse(JSON.stringify(props.data)),
+    plugins: [crosshairPlugin, tempLabelPlugin],
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: {
+        duration: 0
+      },
+      interaction: {
+        mode: 'index',
+        intersect: false
+      },
+      layout: {
+        padding: {
+          left: 20,
+          right: 20,
+          top: 24,
+          bottom: 10
+        }
+      },
+      plugins: {
+        legend: {
+          display: false
+        },
+        tooltip: {
+          enabled: false,
+          external: function(context) {
+            const tooltip = context.tooltip
+            
+            if (tooltip.opacity === 0) {
+              emit('hoverData', null, null)
+              return
+            }
+
+            const dataIndex = tooltip.dataPoints?.[0]?.dataIndex ?? -1
+            
+            if (dataIndex >= 0) {
+              const values = {}
+              chart.data.datasets?.forEach(ds => {
+                if (ds.data && ds.data[dataIndex] !== undefined) {
+                  const point = ds.data[dataIndex]
+                  values[ds.label] = typeof point === 'object' && point !== null ? point.y : point
+                }
+              })
+
+              const label = tooltip.dataPoints?.[0]?.label
+              const weather = label ? findNearestWeather(label) : null
+
+              emit('hoverData', values, { index: dataIndex, weather })
+            }
+          }
+        }
+      },
+      elements: {
+        point: {
+          radius: 0,
+          hoverRadius: 0
+        },
+        line: {
+          tension: 0.3
+        }
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          max: 100,
+          padding: 8,
+          ticks: {
+            callback: (v) => v + '%',
+            font: { size: 10 }
+          }
+        },
+        x: {
+          type: 'category',
+          padding: 8,
+          ticks: {
+            maxTicksLimit: 8,
+            font: { size: 9 },
+            maxRotation: 0
+          }
+        }
+      }
     }
   })
-})
 
-function updateWeatherDatasets(weatherData) {
-  const chart = chartRef.value?.chart
+  updateWeatherData()
+  updateWeatherIcons()
+}
+
+function updateWeatherData() {
   if (!chart) return
 
   for (let i = chart.data.datasets.length - 1; i >= 0; i--) {
@@ -189,63 +363,43 @@ function updateWeatherDatasets(weatherData) {
     }
   }
 
-  if (!weatherData || weatherData.length === 0) {
+  if (!props.weatherData || props.weatherData.length === 0) {
     chart.update()
     return
   }
 
-  const labels = localData.value.labels || []
+  const labels = props.data.labels || []
   if (labels.length === 0) return
 
   let lastTemp = null
-  let lastWind = null
   const tempData = []
-  const windData = []
 
   labels.forEach(label => {
     const weather = findNearestWeather(label, 360)
     if (weather) {
       lastTemp = weather.temperature
-      lastWind = weather.wind_speed
     }
     if (lastTemp !== null) {
       const normalizedTemp = ((lastTemp + 10) / 45) * 100
       tempData.push({ x: label, y: Math.max(0, Math.min(100, normalizedTemp)) })
     }
-    if (lastWind !== null) {
-      const normalizedWind = (lastWind / 60) * 100
-      windData.push({ x: label, y: Math.max(0, Math.min(100, normalizedWind)) })
-    }
   })
 
   if (tempData.length > 0) {
-    chart.data.datasets.push({
+    chart.data.datasets.unshift({
+      type: 'line',
       label: 'Temperature',
       data: tempData,
-      borderColor: 'rgba(255, 140, 0, 0.6)',
-      backgroundColor: 'transparent',
-      borderWidth: 2,
-      borderDash: [5, 5],
+      borderColor: 'transparent',
+      backgroundColor: 'rgba(255, 170, 60, 0.08)',
+      borderWidth: 0,
       tension: 0.3,
-      fill: false,
+      fill: 'origin',
       pointRadius: 0,
+      pointHoverRadius: 0,
+      pointHoverBorderWidth: 0,
       yAxisID: 'y',
-      _weather: true
-    })
-  }
-
-  if (windData.length > 0) {
-    chart.data.datasets.push({
-      label: 'Wind',
-      data: windData,
-      borderColor: 'rgba(100, 116, 139, 0.6)',
-      backgroundColor: 'transparent',
-      borderWidth: 2,
-      borderDash: [5, 5],
-      tension: 0.3,
-      fill: false,
-      pointRadius: 0,
-      yAxisID: 'y',
+      order: 10,
       _weather: true
     })
   }
@@ -253,160 +407,36 @@ function updateWeatherDatasets(weatherData) {
   chart.update()
 }
 
-function getChartX(clientX) {
-  const chart = chartRef.value?.chart
-  
-  if (!chart || !chart.scales?.x || !wrapperRef.value) return null
-
-  const wrapperRect = wrapperRef.value.getBoundingClientRect()
-  const xAxis = chart.scales.x
-  
-  const chartLeft = wrapperRect.left + xAxis.left
-  const chartRight = wrapperRect.left + xAxis.right
-  
-  if (clientX < chartLeft || clientX > chartRight) return null
-
-  return clientX - wrapperRect.left
-}
-
-function updateHover(clientX) {
-  const x = getChartX(clientX)
-  
-  if (x === null) {
-    isVisible.value = false
-    hoverLabel.value = ''
-    emit('hoverData', null)
-    return
+watch(() => props.data, (newData) => {
+  if (chart) {
+    chart.data = JSON.parse(JSON.stringify(newData))
+    chart.update()
+  } else {
+    nextTick(() => createChart())
   }
-
-  const chart = chartRef.value?.chart
-  if (!chart) return
-
-  const labels = localData.value.labels
-  const dataCount = labels?.length || 0
-  if (dataCount === 0) {
-    isVisible.value = false
-    emit('hoverData', null)
-    return
-  }
-
-  crosshairX.value = x
-  isVisible.value = true
-
-  const xAxis = chart.scales.x
-  const wrapperRect = wrapperRef.value.getBoundingClientRect()
-  const canvasRelativeX = clientX - wrapperRect.left
-  const normalizedValue = (canvasRelativeX - xAxis.left) / (xAxis.right - xAxis.left)
-  let dataIndex = Math.round(normalizedValue * (dataCount - 1))
-  dataIndex = Math.max(0, Math.min(dataIndex, dataCount - 1))
-
-  const fullLabel = labels[dataIndex]
-  if (fullLabel) {
-    const timePart = fullLabel.split(', ')[1] || fullLabel
-    hoverLabel.value = timePart
-  }
-
-  const values = {}
-  localData.value.datasets?.forEach(ds => {
-    if (ds.data && ds.data[dataIndex] !== undefined) {
-      const point = ds.data[dataIndex]
-      values[ds.label] = typeof point === 'object' && point !== null ? point.y : point
-    }
+  nextTick(() => {
+    updateWeatherData()
+    updateWeatherIcons()
   })
-  emit('hoverData', values)
-}
+})
 
-function handleMouseMove(event) {
-  if (!isTouching.value) {
-    updateHover(event.clientX)
+watch(() => props.weatherData, (newWeather) => {
+  nextTick(() => {
+    updateWeatherData()
+    updateWeatherIcons()
+  })
+})
+
+onMounted(() => {
+  nextTick(() => createChart())
+})
+
+onBeforeUnmount(() => {
+  if (chart) {
+    chart.destroy()
+    chart = null
   }
-}
-
-function handleMouseLeave() {
-  if (!isTouching.value) {
-    isVisible.value = false
-    hoverLabel.value = ''
-    emit('hoverData', null)
-  }
-}
-
-function handleTouchStart(event) {
-  isTouching.value = true
-  if (event.touches.length > 0) {
-    updateHover(event.touches[0].clientX)
-  }
-}
-
-function handleTouchMove(event) {
-  if (event.touches.length > 0) {
-    updateHover(event.touches[0].clientX)
-  }
-}
-
-function handleTouchEnd() {
-  isTouching.value = false
-  isVisible.value = false
-  hoverLabel.value = ''
-  emit('hoverData', null)
-}
-
-const localOptions = {
-  responsive: true,
-  maintainAspectRatio: false,
-  resizeDelay: 100,
-  animation: {
-    duration: 0
-  },
-  interaction: {
-    mode: 'index',
-    intersect: false
-  },
-  layout: {
-    padding: {
-      left: 20,
-      right: 20,
-      top: 10,
-      bottom: 10
-    }
-  },
-  plugins: {
-    legend: {
-      display: false
-    },
-    tooltip: {
-      enabled: false
-    }
-  },
-  elements: {
-    point: {
-      radius: 0,
-      hoverRadius: 0
-    },
-    line: {
-      tension: 0.3
-    }
-  },
-  scales: {
-    y: {
-      beginAtZero: true,
-      max: 100,
-      padding: 8,
-      ticks: {
-        callback: (v) => v + '%',
-        font: { size: 10 }
-      }
-    },
-    x: {
-      type: 'category',
-      padding: 8,
-      ticks: {
-        maxTicksLimit: 8,
-        font: { size: 9 },
-        maxRotation: 0
-      }
-    }
-  }
-}
+})
 </script>
 
 <style scoped>
@@ -415,7 +445,12 @@ const localOptions = {
   flex: 1;
   min-height: 0;
   height: 100%;
-  touch-action: none;
+}
+
+.chart-wrapper canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .weather-icons {
@@ -431,37 +466,12 @@ const localOptions = {
 .weather-icon {
   position: absolute;
   transform: translateX(-50%);
-  font-size: 16px;
+  font-size: 32px;
   text-shadow: 0 1px 2px rgba(255, 255, 255, 0.8);
 }
 
 .weather-icon.high-wind {
-  font-size: 20px;
+  font-size: 40px;
   opacity: 0.7;
-}
-
-.crosshair {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 1.5px;
-  background-color: rgba(0, 0, 0, 0.6);
-  pointer-events: none;
-  z-index: 10;
-}
-
-.crosshair-label {
-  position: absolute;
-  top: -2px;
-  left: 50%;
-  transform: translateX(-50%);
-  background-color: rgba(0, 0, 0, 0.75);
-  color: white;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 500;
-  white-space: nowrap;
-  pointer-events: none;
 }
 </style>
