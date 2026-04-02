@@ -18,6 +18,15 @@ type DataPoint struct {
 	Utility   int    `json:"utility"`
 }
 
+type WeatherPoint struct {
+	Timestamp     string  `json:"timestamp"`
+	Temperature   float64 `json:"temperature"`
+	WindSpeed     float64 `json:"wind_speed"`
+	CloudCover    int     `json:"cloud_cover"`
+	WeatherType   string  `json:"weather_type"`
+	Precipitation float64 `json:"precipitation"`
+}
+
 func getPools(c *gin.Context) {
 	rows, err := db.Query("SELECT DISTINCT name FROM track_pools ORDER BY name")
 	if err != nil {
@@ -90,6 +99,41 @@ func formatTimestamp(ts string) string {
 	return t.Format(time.RFC3339)
 }
 
+func getWeather(c *gin.Context) {
+	daysStr := c.DefaultQuery("days", "7")
+	days, _ := strconv.Atoi(daysStr)
+
+	query := "SELECT dtime, temperature, wind_speed, cloud_cover, weather_type, precipitation FROM weather"
+	var args []interface{}
+
+	if days > 0 {
+		cutoff := time.Now().AddDate(0, 0, -days)
+		query += " WHERE dtime >= ?"
+		args = append(args, cutoff)
+	}
+
+	query += " ORDER BY dtime ASC"
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var data []WeatherPoint
+	for rows.Next() {
+		var d WeatherPoint
+		var ts string
+		if err := rows.Scan(&ts, &d.Temperature, &d.WindSpeed, &d.CloudCover, &d.WeatherType, &d.Precipitation); err != nil {
+			continue
+		}
+		d.Timestamp = formatTimestamp(ts)
+		data = append(data, d)
+	}
+	c.JSON(200, data)
+}
+
 func health(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "ok"})
 }
@@ -112,6 +156,7 @@ func main() {
 	r.GET("/api/health", health)
 	r.GET("/api/pools", getPools)
 	r.GET("/api/history", getHistory)
+	r.GET("/api/weather", getWeather)
 
 	log.Println("API server running on 0.0.0.0:8085")
 	if err := r.Run("0.0.0.0:8085"); err != nil {

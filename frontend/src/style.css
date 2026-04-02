@@ -20,6 +20,19 @@ body {
   min-height: 100vh;
 }
 
+.chart-wrapper > * {
+  position: relative;
+}
+
+.chartjs-legend,
+.chartjs-tooltip,
+div[class*="legend"],
+ul[class*="legend"],
+section[class*="legend"] {
+  display: none !important;
+  visibility: hidden !important;
+}
+
 header {
   background: linear-gradient(135deg, #1a1a2e 0%, #0066cc 50%, #22c55e 100%);
   color: white;
@@ -108,6 +121,24 @@ button:hover {
 button:active {
   transform: translateY(0);
   box-shadow: 0 2px 8px rgba(0,102,204,0.25);
+}
+
+button.active {
+  background: #22c55e;
+  box-shadow: 0 4px 12px rgba(34, 197, 94, 0.25);
+}
+
+.weather-btn {
+  padding: 0.5rem 0.75rem;
+  min-width: auto;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.weather-btn .weather-icon {
+  font-size: 1.25rem;
+  line-height: 1;
+  margin: 0;
 }
 
 .chart-container {
@@ -237,3 +268,5 @@ button:active {
     font-size: 1.5rem;
   }
 }
+
+
