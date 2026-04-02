@@ -15,7 +15,7 @@
         <span class="weather-value">{{ formatNum(weather.cloud_cover) }}%</span>
       </div>
       <div class="weather-item">
-        <span class="weather-label">Rain</span>
+        <span class="weather-label">Precip</span>
         <span class="weather-value">{{ formatNum(weather.precipitation) }} mm</span>
       </div>
     </div>

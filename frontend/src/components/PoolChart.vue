@@ -2,20 +2,15 @@
   <div class="chart-wrapper" ref="wrapperRef">
     <canvas ref="canvasRef"></canvas>
     <div class="weather-icons" v-if="weatherIcons.length > 0">
-      <div 
-        v-for="(icon, index) in weatherIcons" 
+      <div
+        v-for="(icon, index) in weatherIcons"
         :key="index"
         class="weather-icon"
-        :class="[icon.type, { 'high-wind': icon.highWind }]"
+        :class="{ strong: icon.strong }"
         :style="{ left: icon.x + '%', opacity: icon.opacity }"
         :title="icon.title"
       >
-        <span v-if="icon.type === 'sun'">☀️</span>
-        <span v-else-if="icon.type === 'partly-cloudy'">⛅</span>
-        <span v-else-if="icon.type === 'cloudy'">☁️</span>
-        <span v-else-if="icon.type === 'rain'">🌧️</span>
-        <span v-else-if="icon.type === 'snow'">❄️</span>
-        <span v-else-if="icon.type === 'thunderstorm'">⛈️</span>
+        <span class="icon-main">{{ icon.emoji }}</span>
       </div>
     </div>
   </div>
@@ -186,72 +181,122 @@ function parseChartLabel(label) {
   return null
 }
 
+const WEATHER_EMOJI = {
+  clear: '☀️',
+  sunny: '☀️',
+  partly_cloudy: '⛅',
+  cloudy: '☁️',
+  overcast: '☁️',
+  rain: '🌧️',
+  rainy: '🌧️',
+  drizzle: '🌦️',
+  snow: '❄️',
+  snowy: '❄️',
+  sleet: '🌨️',
+  thunderstorm: '⛈️',
+  fog: '🌫️',
+  mist: '🌫️',
+}
+
+const HIGH_WIND_KMH = 15
+const VERY_HIGH_WIND_KMH = 30
+const MIN_ICON_SPACING = 4 // percent
+
+function getWeatherEmoji(weatherType) {
+  return WEATHER_EMOJI[weatherType] ?? '☁️'
+}
+
+function buildIconTitle(w) {
+  const parts = [`${w.temperature}°C`, `${w.wind_speed} km/h wind`, `${w.cloud_cover}% clouds`]
+  if (w.precipitation > 0) parts.push(`${w.precipitation} mm`)
+  return parts.join(', ')
+}
+
 function updateWeatherIcons() {
-  if (!chart || !chart.scales?.x || !props.data.labels || props.data.labels.length === 0) {
+  if (!chart || !chart.scales?.x || !props.data.labels || props.data.labels.length === 0
+      || !props.weatherData || props.weatherData.length === 0) {
     weatherIcons.value = []
     return
   }
-  
+
   const labels = props.data.labels
   const xScale = chart.scales.x
   const chartLeft = xScale.left
   const chartRight = xScale.right
   const chartWidth = chartRight - chartLeft
-  
-  if (chartWidth <= 0) {
-    weatherIcons.value = []
-    return
-  }
-  
+  if (chartWidth <= 0) { weatherIcons.value = []; return }
   const wrapperWidth = wrapperRef.value?.offsetWidth || 1
-  
-  const icons = []
-  const step = Math.max(1, Math.floor(labels.length / 10))
-  
-  for (let i = 0; i < labels.length; i += step) {
-    const weather = findNearestWeather(labels[i])
-    if (weather) {
-      const normalizedPos = labels.length > 1 ? i / (labels.length - 1) : 0
-      const pixelPos = chartLeft + normalizedPos * chartWidth
-      const percentFromWrapper = (pixelPos / wrapperWidth) * 100
-      
-      const minPercent = (chartLeft / wrapperWidth) * 100 + 0.5
-      const maxPercent = (chartRight / wrapperWidth) * 100 - 0.5
-      
-      if (percentFromWrapper > minPercent && percentFromWrapper < maxPercent) {
-        let iconType = weather.weather_type
-        let title = `${weather.temperature}°C, ${weather.wind_speed} km/h, ${weather.cloud_cover}% clouds`
-        
-        if (weather.cloud_cover > 70 && hasHighCloudsForHours(i, labels, 3)) {
-          iconType = 'cloudy'
-          title += ' (overcast 3+ hours)'
+
+  const minX = (chartLeft / wrapperWidth) * 100 + 1
+  const maxX = (chartRight / wrapperWidth) * 100 - 1
+
+  // Map a weather UTC timestamp to a chart x-percent position
+  function timestampToX(timestamp) {
+    const wDate = new Date(timestamp)
+    let bestIdx = 0, bestDiff = Infinity
+    for (let i = 0; i < labels.length; i++) {
+      const lDate = parseChartLabel(labels[i])
+      if (lDate) {
+        const diff = Math.abs(lDate.getTime() - wDate.getTime())
+        if (diff < bestDiff) { bestDiff = diff; bestIdx = i }
+      }
+    }
+    const norm = labels.length > 1 ? bestIdx / (labels.length - 1) : 0
+    return ((chartLeft + norm * chartWidth) / wrapperWidth) * 100
+  }
+
+  const events = []
+  let prevType = null
+  let prevWindHigh = false
+
+  for (let i = 0; i < props.weatherData.length; i++) {
+    const w = props.weatherData[i]
+    const type = w.weather_type
+    const windHigh = w.wind_speed >= HIGH_WIND_KMH
+    const windVeryHigh = w.wind_speed >= VERY_HIGH_WIND_KMH
+
+    const isFirst = i === 0
+    const typeChanged = prevType !== null && type !== prevType
+    const windSpiked = windHigh && !prevWindHigh
+
+    if (isFirst || typeChanged || windSpiked) {
+      const x = timestampToX(w.timestamp)
+      if (x >= minX && x <= maxX) {
+        // Single emoji: weather change takes priority; pure wind spike shows wind icon
+        let emoji
+        if (isFirst || typeChanged) {
+          emoji = getWeatherEmoji(type)
+        } else {
+          emoji = windVeryHigh ? '🌬️' : '💨'
         }
-        
-        icons.push({
-          x: percentFromWrapper,
-          type: iconType,
-          highWind: weather.wind_speed > 15,
-          opacity: 0.5,
-          title: title
+        events.push({
+          x,
+          emoji,
+          strong: windVeryHigh,
+          title: buildIconTitle(w),
+          opacity: 0.6,
         })
       }
     }
-  }
-  
-  weatherIcons.value = icons
-}
 
-function hasHighCloudsForHours(index, labels, minHours) {
-  let count = 0
-  for (let i = index; i < labels.length; i++) {
-    const weather = findNearestWeather(labels[i], 360)
-    if (weather && weather.cloud_cover > 70) {
-      count++
+    prevType = type
+    prevWindHigh = windHigh
+  }
+
+  // Merge events that land too close together on the x-axis
+  const merged = []
+  for (const ev of events) {
+    const last = merged[merged.length - 1]
+    if (last && Math.abs(ev.x - last.x) < MIN_ICON_SPACING) {
+      last.emoji = ev.emoji
+      if (ev.strong) last.strong = true
+      last.title = ev.title
     } else {
-      break
+      merged.push({ ...ev })
     }
   }
-  return count >= minHours
+
+  weatherIcons.value = merged.filter(ev => ev.emoji)
 }
 
 function createChart() {
@@ -375,7 +420,7 @@ function updateWeatherData() {
   const tempData = []
 
   labels.forEach(label => {
-    const weather = findNearestWeather(label, 360)
+    const weather = findNearestWeather(label)
     if (weather) {
       lastTemp = weather.temperature
     }
@@ -455,23 +500,27 @@ onBeforeUnmount(() => {
 
 .weather-icons {
   position: absolute;
-  top: 30%;
+  top: 24px;
   left: 0;
   right: 0;
-  height: 60%;
+  bottom: 24px;
   pointer-events: none;
   z-index: 5;
 }
 
 .weather-icon {
   position: absolute;
-  transform: translateX(-50%);
-  font-size: 32px;
-  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.8);
+  top: 50%;
+  transform: translateX(-50%) translateY(-50%);
+  line-height: 1;
 }
 
-.weather-icon.high-wind {
-  font-size: 40px;
-  opacity: 0.7;
+.icon-main {
+  font-size: 30px;
+  filter: drop-shadow(0 1px 2px rgba(255,255,255,0.95));
+}
+
+.weather-icon.strong .icon-main {
+  font-size: 36px;
 }
 </style>

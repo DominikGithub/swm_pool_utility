@@ -19,11 +19,12 @@ type DataPoint struct {
 }
 
 type WeatherPoint struct {
-	Timestamp    string  `json:"timestamp"`
-	Temperature float64 `json:"temperature"`
-	WindSpeed    float64 `json:"wind_speed"`
-	CloudCover   int     `json:"cloud_cover"`
-	WeatherType  string  `json:"weather_type"`
+	Timestamp     string  `json:"timestamp"`
+	Temperature   float64 `json:"temperature"`
+	WindSpeed     float64 `json:"wind_speed"`
+	CloudCover    int     `json:"cloud_cover"`
+	WeatherType   string  `json:"weather_type"`
+	Precipitation float64 `json:"precipitation"`
 }
 
 func getPools(c *gin.Context) {
@@ -102,7 +103,7 @@ func getWeather(c *gin.Context) {
 	daysStr := c.DefaultQuery("days", "7")
 	days, _ := strconv.Atoi(daysStr)
 
-	query := "SELECT dtime, temperature, wind_speed, cloud_cover, weather_type FROM weather"
+	query := "SELECT dtime, temperature, wind_speed, cloud_cover, weather_type, precipitation FROM weather"
 	var args []interface{}
 
 	if days > 0 {
@@ -124,7 +125,7 @@ func getWeather(c *gin.Context) {
 	for rows.Next() {
 		var d WeatherPoint
 		var ts string
-		if err := rows.Scan(&ts, &d.Temperature, &d.WindSpeed, &d.CloudCover, &d.WeatherType); err != nil {
+		if err := rows.Scan(&ts, &d.Temperature, &d.WindSpeed, &d.CloudCover, &d.WeatherType, &d.Precipitation); err != nil {
 			continue
 		}
 		d.Timestamp = formatTimestamp(ts)
