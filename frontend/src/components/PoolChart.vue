@@ -503,7 +503,7 @@ onBeforeUnmount(() => {
   top: 24px;
   left: 0;
   right: 0;
-  bottom: 24px;
+  height: 30%;
   pointer-events: none;
   z-index: 5;
 }
