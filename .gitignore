@@ -1,3 +1,2 @@
 .env
-/data/swm_pool_utility.db
-swm_pool_utility.db
+*.db

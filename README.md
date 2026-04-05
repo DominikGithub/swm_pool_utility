@@ -118,13 +118,6 @@ SQLite database stored in a Docker volume (`db_data`), which is mounted to the h
 
 The SQLite database is stored in a Docker volume (`db_data`). Use the following commands to back up and restore.
 
-### Find Volume Mount Point
-
-```bash
-# Get the host path of the volume
-docker volume inspect swm_pool_utility_db_data --format '{{ .Mountpoint }}'
-```
-
 ### Backup
 
 ```bash
@@ -135,6 +128,9 @@ docker cp swm_pool_utility-api-1:/data/swm_pool_utility.db ./backup.db
 ### Restore
 
 ```bash
+# Verify host volume mount point
+docker volume inspect swm_pool_utility_db_data --format '{{ .Mountpoint }}'
+
 # Stop the containers to ensure file consistency
 docker compose stop api pool-scraper weather-scraper
 

@@ -61,18 +61,27 @@ let chart = null
 
 const crosshairPlugin = {
   id: 'crosshair',
+  afterEvent(chart, args) {
+    const event = args.event
+    if (event.type === 'mousemove') {
+      chart._crosshairX = event.x
+    } else if (event.type === 'mouseout') {
+      chart._crosshairX = null
+    }
+  },
   afterDraw(chart) {
-    const tooltip = chart.tooltip
-    if (!tooltip || tooltip.opacity === 0) return
+    const x = chart._crosshairX
+    if (x == null) return
 
-    const x = tooltip.caretX
+    const xScale = chart.scales.x
     const yScale = chart.scales.y
-    if (!yScale) return
+    if (!xScale || !yScale) return
+    if (x < xScale.left || x > xScale.right) return
 
     const ctx = chart.ctx
     ctx.save()
 
-    // Draw vertical line
+    // Draw vertical line at actual mouse position
     ctx.beginPath()
     ctx.moveTo(x, yScale.top)
     ctx.lineTo(x, yScale.bottom)
@@ -81,8 +90,9 @@ const crosshairPlugin = {
     ctx.stroke()
 
     // Draw time-only label at top of line
-    const label = tooltip.dataPoints?.[0]?.label
-    if (label) {
+    const tooltip = chart.tooltip
+    const label = tooltip?.dataPoints?.[0]?.label
+    if (label && tooltip.opacity !== 0) {
       const timeMatch = label.match(/(\d{2}:\d{2})/)
       const timeStr = timeMatch ? timeMatch[1] : label
 
@@ -96,12 +106,9 @@ const crosshairPlugin = {
       const boxY = yScale.top - boxHeight - 2
 
       // Clamp horizontally to stay within chart area
-      const xScale = chart.scales.x
       let boxX = x - boxWidth / 2
-      if (xScale) {
-        if (boxX < xScale.left) boxX = xScale.left
-        if (boxX + boxWidth > xScale.right) boxX = xScale.right - boxWidth
-      }
+      if (boxX < xScale.left) boxX = xScale.left
+      if (boxX + boxWidth > xScale.right) boxX = xScale.right - boxWidth
 
       ctx.fillStyle = 'rgba(0, 0, 0, 0.75)'
       ctx.beginPath()
@@ -182,7 +189,7 @@ function parseChartLabel(label) {
 }
 
 const WEATHER_EMOJI = {
-  clear: '☀️',
+  clear: '',
   sunny: '☀️',
   partly_cloudy: '⛅',
   cloudy: '☁️',
@@ -336,6 +343,9 @@ function createChart() {
         },
         tooltip: {
           enabled: false,
+          filter: function(tooltipItem) {
+            return !tooltipItem.dataset._weather
+          },
           external: function(context) {
             const tooltip = context.tooltip
             
@@ -349,6 +359,7 @@ function createChart() {
             if (dataIndex >= 0) {
               const values = {}
               chart.data.datasets?.forEach(ds => {
+                if (ds._weather) return
                 if (ds.data && ds.data[dataIndex] !== undefined) {
                   const point = ds.data[dataIndex]
                   values[ds.label] = typeof point === 'object' && point !== null ? point.y : point
@@ -436,13 +447,14 @@ function updateWeatherData() {
       label: 'Temperature',
       data: tempData,
       borderColor: 'transparent',
-      backgroundColor: 'rgba(255, 170, 60, 0.08)',
+      backgroundColor: 'rgba(255, 170, 60, 0.10)',
       borderWidth: 0,
       tension: 0.3,
       fill: 'origin',
       pointRadius: 0,
       pointHoverRadius: 0,
       pointHoverBorderWidth: 0,
+      pointHitRadius: 0,
       yAxisID: 'y',
       order: 10,
       _weather: true

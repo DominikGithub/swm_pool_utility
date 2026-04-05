@@ -1,5 +1,5 @@
 <template>
-  <div class="pool-card weather-card" :class="{ hovered: !!weather }">
+  <div class="pool-card weather-card">
     <h3>Weather</h3>
     <div class="weather-grid" v-if="weather">
       <div class="weather-item">
@@ -46,11 +46,7 @@ function formatNum(val) {
 </script>
 
 <style scoped>
-.weather-card {
-  background: white;
-}
-
-.weather-card.hovered {
+.weather-card:hover {
   background-color: #f8fafc;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
 }

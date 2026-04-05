@@ -183,11 +183,6 @@ button.active {
   min-width: 0;
 }
 
-.pool-card.hovered {
-  box-shadow: 0 4px 20px rgba(0,102,204,0.25);
-  background-color: #f0f7ff;
-}
-
 .pool-card h3 {
   font-size: 0.875rem;
   color: #666;
