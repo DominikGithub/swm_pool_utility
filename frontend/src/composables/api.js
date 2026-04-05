@@ -14,3 +14,9 @@ export async function fetchWeather(query = '') {
   const res = await fetch(`${API_BASE}/weather?${query}`)
   return res.json()
 }
+
+export async function fetchDailyAvg(pool = '') {
+  const qs = pool ? `pool=${encodeURIComponent(pool)}` : ''
+  const res = await fetch(`${API_BASE}/daily-avg${qs ? '?' + qs : ''}`)
+  return res.json()
+}

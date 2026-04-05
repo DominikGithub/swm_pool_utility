@@ -48,10 +48,11 @@ import { ref, computed, onMounted } from 'vue'
 import PoolChart from './components/PoolChart.vue'
 import PoolCard from './components/PoolCard.vue'
 import WeatherCard from './components/WeatherCard.vue'
-import { fetchPools, fetchHistory, fetchWeather } from './composables/api'
+import { fetchPools, fetchHistory, fetchWeather, fetchDailyAvg } from './composables/api'
 
 const pools = ref([])
 const historyData = ref([])
+const dailyAvgData = ref({ labels: [], datasets: [] })
 const weatherData = ref([])
 const selectedPool = ref('')
 const selectedDays = ref(1)
@@ -122,8 +123,15 @@ function getPoolWithValue(pool) {
 }
 
 const currentPools = computed(() => {
-  if (!historyData.value.length) return []
+  if (!historyData.value.length && !dailyAvgData.value.datasets.length) return []
   
+  if (isWeekdayView.value) {
+    return dailyAvgData.value.datasets.map(ds => ({
+      name: ds.label,
+      utility: null
+    }))
+  }
+
   const poolMap = new Map()
   const reversed = [...historyData.value].reverse()
   reversed.forEach(item => {
@@ -135,27 +143,10 @@ const currentPools = computed(() => {
   return Array.from(poolMap.values()).slice(0, 12)
 })
 
-const SHORT_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-const SLOT_MINUTES = 10
-const SLOTS_PER_DAY = (24 * 60) / SLOT_MINUTES // 144
-
 const CHART_COLORS = [
   '#0066cc', '#22c55e', '#eab308', '#ef4444', '#8b5cf6',
   '#ec4899', '#06b6d4', '#f97316', '#84cc16', '#64748b'
 ]
-
-// Build all 1008 labels: "Mon 00:00", "Mon 00:10", ..., "Sun 23:50"
-const WEEKDAY_SLOT_LABELS = (() => {
-  const labels = []
-  for (let d = 0; d < 7; d++) {
-    for (let h = 0; h < 24; h++) {
-      for (let m = 0; m < 60; m += SLOT_MINUTES) {
-        labels.push(`${SHORT_DAYS[d]} ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`)
-      }
-    }
-  }
-  return labels
-})()
 
 function hexToRgba(hex, alpha) {
   const r = parseInt(hex.slice(1, 3), 16)
@@ -164,91 +155,64 @@ function hexToRgba(hex, alpha) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
-function buildWeekdayChartData() {
-  const data = historyData.value
-  const labels = WEEKDAY_SLOT_LABELS
+const chartData = computed(() => {
+  if (isWeekdayView.value) {
+    if (!dailyAvgData.value.labels.length) return { labels: [], datasets: [] }
 
-  // Bucket: pool -> slotIndex -> [values]
-  const poolSlots = {}
-  data.forEach(item => {
-    const date = new Date(item.timestamp)
-    const dow = (date.getDay() + 6) % 7 // Monday=0 ... Sunday=6
-    const minuteOfDay = date.getHours() * 60 + Math.floor(date.getMinutes() / SLOT_MINUTES) * SLOT_MINUTES
-    const slotIndex = dow * SLOTS_PER_DAY + minuteOfDay / SLOT_MINUTES
-    const utilization = Math.max(0, 100 - item.utility)
+    const apiData = dailyAvgData.value
+    const isSinglePool = selectedPool.value !== ''
+    const datasets = []
 
-    if (!poolSlots[item.name]) poolSlots[item.name] = {}
-    if (!poolSlots[item.name][slotIndex]) poolSlots[item.name][slotIndex] = []
-    poolSlots[item.name][slotIndex].push(utilization)
-  })
+    apiData.datasets.forEach((ds, i) => {
+      const color = CHART_COLORS[i % CHART_COLORS.length]
+      const chartData = ds.data.map((v, idx) => v < 0 ? null : v)
+      const stddev = ds.stddev || []
 
-  const isSinglePool = selectedPool.value !== ''
-  const datasets = []
-
-  Object.entries(poolSlots).forEach(([name, slots], i) => {
-    const color = CHART_COLORS[i % CHART_COLORS.length]
-
-    const means = labels.map((_, idx) => {
-      const vals = slots[idx]
-      return vals && vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : null
-    })
-
-    if (isSinglePool) {
-      const stddevs = labels.map((_, idx) => {
-        const vals = slots[idx]
-        if (!vals || vals.length < 2 || means[idx] === null) return 0
-        const mean = means[idx]
-        const variance = vals.reduce((sum, v) => sum + (v - mean) ** 2, 0) / vals.length
-        return Math.sqrt(variance)
-      })
+      if (isSinglePool) {
+        datasets.push({
+          label: ds.label + ' (lower)',
+          data: chartData.map((v, idx) => v !== null ? Math.max(0, v - stddev[idx]) : null),
+          borderColor: 'transparent',
+          borderWidth: 0,
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          pointHitRadius: 0,
+          tension: 0.3,
+          fill: false,
+          spanGaps: true,
+          _ci: true
+        })
+        datasets.push({
+          label: ds.label + ' (upper)',
+          data: chartData.map((v, idx) => v !== null ? Math.min(100, v + stddev[idx]) : null),
+          borderColor: 'transparent',
+          borderWidth: 0,
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          pointHitRadius: 0,
+          tension: 0.3,
+          backgroundColor: hexToRgba(color, 0.15),
+          fill: '-1',
+          spanGaps: true,
+          _ci: true
+        })
+      }
 
       datasets.push({
-        label: name + ' (lower)',
-        data: means.map((m, idx) => m !== null ? Math.max(0, m - stddevs[idx]) : null),
-        borderColor: 'transparent',
-        borderWidth: 0,
-        pointRadius: 0,
-        pointHoverRadius: 0,
-        pointHitRadius: 0,
+        label: ds.label,
+        data: chartData,
+        borderColor: color,
         tension: 0.3,
         fill: false,
         spanGaps: true,
-        _ci: true
+        borderDash: isSinglePool ? [] : [4, 4]
       })
-      datasets.push({
-        label: name + ' (upper)',
-        data: means.map((m, idx) => m !== null ? Math.min(100, m + stddevs[idx]) : null),
-        borderColor: 'transparent',
-        borderWidth: 0,
-        pointRadius: 0,
-        pointHoverRadius: 0,
-        pointHitRadius: 0,
-        tension: 0.3,
-        backgroundColor: hexToRgba(color, 0.15),
-        fill: '-1',
-        spanGaps: true,
-        _ci: true
-      })
-    }
-
-    datasets.push({
-      label: name,
-      data: means,
-      borderColor: color,
-      tension: 0.3,
-      fill: false,
-      spanGaps: true,
-      borderDash: isSinglePool ? [] : [5, 1]
     })
-  })
 
-  return { labels, datasets }
-}
+    return { labels: apiData.labels, datasets }
+  }
 
-const chartData = computed(() => {
   if (!historyData.value.length) return { labels: [], datasets: [] }
-
-  if (isWeekdayView.value) return buildWeekdayChartData()
 
   const days = selectedDays.value
   let filtered = historyData.value
@@ -290,22 +254,28 @@ async function fetchData() {
   loading.value = true
   try {
     const isWeekday = selectedDays.value === 'weekday'
-    const fetchDays = isWeekday ? 90 : selectedDays.value
 
-    const params = new URLSearchParams()
-    if (selectedPool.value) params.set('pool', selectedPool.value)
-    params.set('days', fetchDays)
-    
-    const weatherParams = new URLSearchParams()
-    weatherParams.set('days', fetchDays)
-    
-    const [history, weather] = await Promise.all([
-      fetchHistory(params.toString()),
-      isWeekday ? Promise.resolve([]) : fetchWeather(weatherParams.toString())
-    ])
-    
-    historyData.value = history
-    weatherData.value = weather
+    if (isWeekday) {
+      const data = await fetchDailyAvg(selectedPool.value)
+      dailyAvgData.value = data
+    } else {
+      const fetchDays = selectedDays.value
+
+      const params = new URLSearchParams()
+      if (selectedPool.value) params.set('pool', selectedPool.value)
+      params.set('days', fetchDays)
+      
+      const weatherParams = new URLSearchParams()
+      weatherParams.set('days', fetchDays)
+      
+      const [history, weather] = await Promise.all([
+        fetchHistory(params.toString()),
+        fetchWeather(weatherParams.toString())
+      ])
+      
+      historyData.value = history
+      weatherData.value = weather
+    }
   } catch (err) {
     console.error('Failed to fetch data:', err)
   }
@@ -339,6 +309,9 @@ onMounted(async () => {
     } catch (err) {
       console.error('Failed to fetch weather:', err)
     }
+  }
+  if (selectedDays.value === 'weekday') {
+    dailyAvgData.value = await fetchDailyAvg(selectedPool.value)
   }
 })
 </script>

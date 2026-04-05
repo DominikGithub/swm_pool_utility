@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"strconv"
 	"time"
@@ -138,6 +139,104 @@ func health(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "ok"})
 }
 
+func getDailyAvg(c *gin.Context) {
+	pool := c.Query("pool")
+
+	query := `SELECT pool_name, slot_index, mean_utilization, std_dev, sample_count, updated_at FROM daily_avg_cache`
+	var args []interface{}
+	if pool != "" {
+		query += ` WHERE pool_name = ?`
+		args = append(args, pool)
+	}
+	query += ` ORDER BY pool_name, slot_index`
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	type slotData struct {
+		mean       float64
+		stddev     float64
+		sampleCount int
+	}
+
+	// poolName -> slotIndex -> slotData
+	byPool := map[string]map[int]slotData{}
+	var updatedAt string
+
+	for rows.Next() {
+		var poolName string
+		var si int
+		var mean, stddev float64
+		var count int
+		var ts string
+		if err := rows.Scan(&poolName, &si, &mean, &stddev, &count, &ts); err != nil {
+			continue
+		}
+		if byPool[poolName] == nil {
+			byPool[poolName] = map[int]slotData{}
+		}
+		byPool[poolName][si] = slotData{mean: mean, stddev: stddev, sampleCount: count}
+		if updatedAt == "" || ts > updatedAt {
+			updatedAt = ts
+		}
+	}
+
+	if len(byPool) == 0 {
+		c.JSON(200, gin.H{"labels": []string{}, "datasets": []interface{}{}})
+		return
+	}
+
+	// Build ordered labels: "Mon 00:00", "Mon 00:10", ..., "Sun 23:50"
+	shortDays := [7]string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
+	slotsPerDay := 144
+	labels := make([]string, 0, 7*slotsPerDay)
+	for d := 0; d < 7; d++ {
+		for h := 0; h < 24; h++ {
+			for m := 0; m < 60; m += 10 {
+				labels = append(labels, fmt.Sprintf("%s %02d:%02d", shortDays[d], h, m))
+			}
+		}
+	}
+
+	type dataset struct {
+		Label       string    `json:"label"`
+		Data        []float64 `json:"data"`
+		StdDev      []float64 `json:"stddev"`
+		SampleCount []int     `json:"sample_count"`
+	}
+
+	var datasets []dataset
+	for poolName, slots := range byPool {
+		ds := dataset{
+			Label:       poolName,
+			Data:        make([]float64, len(labels)),
+			StdDev:      make([]float64, len(labels)),
+			SampleCount: make([]int, len(labels)),
+		}
+		for i := range ds.Data {
+			ds.Data[i] = -1 // sentinel: no data
+		}
+		for si, sd := range slots {
+			if si >= 0 && si < len(labels) {
+				ds.Data[si] = sd.mean
+				ds.StdDev[si] = sd.stddev
+				ds.SampleCount[si] = sd.sampleCount
+			}
+		}
+		datasets = append(datasets, ds)
+	}
+
+	c.JSON(200, gin.H{
+		"labels":     labels,
+		"datasets":   datasets,
+		"updated_at": updatedAt,
+	})
+}
+
 func main() {
 	var err error
 	db, err = sql.Open("sqlite3", "/data/swm_pool_utility.db")
@@ -157,6 +256,7 @@ func main() {
 	r.GET("/api/pools", getPools)
 	r.GET("/api/history", getHistory)
 	r.GET("/api/weather", getWeather)
+	r.GET("/api/daily-avg", getDailyAvg)
 
 	log.Println("API server running on 0.0.0.0:8085")
 	if err := r.Run("0.0.0.0:8085"); err != nil {
