@@ -345,9 +345,9 @@ function createChart() {
       },
       layout: {
         padding: {
-          left: 20,
-          right: 20,
-          top: 24,
+          left: 0,
+          right: 12,
+          top: 18,
           bottom: 10
         }
       },
