@@ -8,7 +8,7 @@
         </svg>
       </button>
     </div>
-    <div class="value" :class="levelClass">{{ pool.utility }}%</div>
+    <div class="value" :class="levelClass">{{ Math.round(pool.utility) }}%</div>
   </div>
 </template>
 

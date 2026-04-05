@@ -59,10 +59,6 @@ const weatherIcons = ref([])
 
 let chart = null
 
-const resizePlugin = {
-  id: 'dowResize'
-}
-
 const crosshairPlugin = {
   id: 'crosshair',
   afterEvent(chart, args) {
@@ -100,7 +96,9 @@ const crosshairPlugin = {
       const timeMatch = label.match(/(\d{2}:\d{2})/)
       const timeStr = timeMatch ? timeMatch[1] : label
       const dow = getDayOfWeek(label)
-      const displayStr = dow ? `${dow.short} ${timeStr}` : timeStr
+      // Handle date labels ("05.04., 14:30") and weekday-slot labels ("Mon 14:30")
+      const dowPrefix = label.match(/^([A-Z][a-z]{2})\s/)
+      const displayStr = dow ? `${dow.short} ${timeStr}` : (dowPrefix ? label : timeStr)
 
       ctx.font = '10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
       ctx.textAlign = 'center'
@@ -334,7 +332,7 @@ function createChart() {
   chart = new Chart(ctx, {
     type: 'line',
     data: JSON.parse(JSON.stringify(props.data)),
-    plugins: [resizePlugin, crosshairPlugin, tempLabelPlugin],
+    plugins: [crosshairPlugin, tempLabelPlugin],
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -360,7 +358,7 @@ function createChart() {
         tooltip: {
           enabled: false,
           filter: function(tooltipItem) {
-            return !tooltipItem.dataset._weather
+            return !tooltipItem.dataset._weather && !tooltipItem.dataset._ci
           },
           external: function(context) {
             const tooltip = context.tooltip
@@ -375,7 +373,7 @@ function createChart() {
             if (dataIndex >= 0) {
               const values = {}
               chart.data.datasets?.forEach(ds => {
-                if (ds._weather) return
+                if (ds._weather || ds._ci) return
                 if (ds.data && ds.data[dataIndex] !== undefined) {
                   const point = ds.data[dataIndex]
                   values[ds.label] = typeof point === 'object' && point !== null ? point.y : point
@@ -412,10 +410,31 @@ function createChart() {
         x: {
           type: 'category',
           padding: 8,
+          afterBuildTicks(scale) {
+            const labels = scale.chart.data.labels || []
+            const firstLabel = labels[0] || ''
+            if (firstLabel.match(/^[A-Z][a-z]{2}\s\d{2}:\d{2}$/)) {
+              const slotsPerDay = Math.round(labels.length / 7)
+              const noonSlot = Math.round(slotsPerDay / 2)
+              scale.ticks = []
+              for (let d = 0; d < 7; d++) {
+                scale.ticks.push({ value: d * slotsPerDay + noonSlot })
+              }
+            }
+          },
           ticks: {
             maxTicksLimit: 8,
             font: { size: 9 },
-            maxRotation: 0
+            maxRotation: 0,
+            callback: function(val) {
+              const label = this.getLabelForValue(val)
+              const dowMatch = label.match(/^([A-Z][a-z]{2})\s\d{2}:\d{2}$/)
+              if (dowMatch) {
+                const full = { Mon: 'Monday', Tue: 'Tuesday', Wed: 'Wednesday', Thu: 'Thursday', Fri: 'Friday', Sat: 'Saturday', Sun: 'Sunday' }
+                return full[dowMatch[1]] || dowMatch[1]
+              }
+              return label
+            }
           }
         }
       }

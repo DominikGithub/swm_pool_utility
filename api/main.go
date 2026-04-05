@@ -48,7 +48,7 @@ func getPools(c *gin.Context) {
 
 func getHistory(c *gin.Context) {
 	pool := c.Query("pool")
-	daysStr := c.DefaultQuery("days", "7")
+	daysStr := c.DefaultQuery("days", "1")
 	days, _ := strconv.Atoi(daysStr)
 
 	query := "SELECT name, dtime, utility FROM track_pools"
@@ -100,7 +100,7 @@ func formatTimestamp(ts string) string {
 }
 
 func getWeather(c *gin.Context) {
-	daysStr := c.DefaultQuery("days", "7")
+	daysStr := c.DefaultQuery("days", "1")
 	days, _ := strconv.Atoi(daysStr)
 
 	query := "SELECT dtime, temperature, wind_speed, cloud_cover, weather_type, precipitation FROM weather"

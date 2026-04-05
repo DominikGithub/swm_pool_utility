@@ -2,8 +2,12 @@
 
 A monitoring application that tracks historical pool utilization from SWM (Stadtwerke München) swimming pools and correlates it with weather conditions. The dashboard provides insights into how weather affects pool attendance.
 
-[![Pool Dashboard](res/pool_dashboard_20260329.png)](http://grid.resolve.bar:8086/)
+[![Pool Dashboard](res/pool_dashboard_20260405.png)](http://grid.resolve.bar:8086/)
 
+### Average Utilization Statistics
+![Daily Average Statistics](res/dashboard_daily_average_michaelibad.png)
+
+The daily average view derives aggregated statistics from a sliding window over the last 90 days.
 
 ## Services
 
@@ -55,39 +59,38 @@ Fetches current weather conditions from [Open-Meteo API](https://open-meteo.com/
 |----------|-------------|
 | `GET /api/health` | Health check |
 | `GET /api/pools` | List all tracked pools |
-| `GET /api/history?days=7` | Get pool history (default: 7 days) |
+| `GET /api/history?days=1` | Get pool history (default: 24 hours) |
 | `GET /api/history?pool=X&days=30` | Filter by specific pool |
-| `GET /api/weather?days=7` | Get weather history (default: 7 days) |
+| `GET /api/weather?days=1` | Get weather history (default: 24 hours) |
 
 ## Dashboard Features
 
 ### Chart
-- **Pool utilization lines** — one coloured line per pool showing utilization (%) over time
-- **Temperature fill** — subtle amber area chart behind the lines indicating temperature (normalized to the 0–100% axis, range –10°C to 35°C); labelled "Temperature" in the bottom-right corner of the chart
-- **Vertical crosshair** — follows the cursor and shows the time at the top of the line
-- **Weather icon overlay** — emoji icons placed in the top 30% of the chart, shown only at weather-state change points:
-  - ☀️ Clear / ⛅ Partly cloudy / ☁️ Cloudy / 🌧️ Rain / 🌦️ Drizzle / ❄️ Snow / 🌨️ Sleet / ⛈️ Thunderstorm / 🌫️ Fog
+- **Pool utilization** — one coloured line per pool showing utilization (%) over time
+- **Temperature fill** — subtle amber area chart indicating temperature (normalized to the 0–100% axis, range –10°C to 35°C)
+- **Weather icon overlay** — emoji icons, shown at weather-state change points:
+  - Clear / ⛅ Partly cloudy / ☁️ Cloudy / 🌧️ Rain / 🌦️ Drizzle / ❄️ Snow / 🌨️ Sleet / ⛈️ Thunderstorm / 🌫️ Fog
   - 💨 Wind spike (≥15 km/h) / 🌬️ Very strong wind (≥30 km/h)
-  - Icons are only placed when the weather state **changes**; nearby events are merged to avoid crowding
 
 ### Weather toggle
 The toolbar button (☁️ / 🌤️) toggles weather overlays on/off:
 - Enables/disables the temperature area fill in the chart
-- Shows/hides weather emoji icons on the chart
+- Shows/hides weather icons on the chart
 - Shows/hides the weather tile in the pool card list
-- State is persisted in `localStorage`
+
+### Daily Average view
+The "Daily Average" option shows the **recurring weekly utilization pattern**:
+- One line per pool showing the average utilization for each weekday and time slot across all weeks in the dataset
+- In **single-pool mode**, a shaded confidence-interval band (±1 standard deviation) highlights variability
 
 ### Pool cards
 - One card per pool showing the current (or hovered) utilization percentage
 - Colour-coded: green < 40%, yellow 40–70%, red > 70%
-- Star button to mark a pool as favourite (persisted in a cookie); favourited pool is pre-selected on next visit
-- Cards update in real-time as the cursor moves over the chart
+- Star button to mark a favourite pool
 
 ### Weather tile
-- Displayed at the end of the pool card list when weather overlay is active
 - Shows four metrics for the current or hovered timestamp: **Temp**, **Wind**, **Clouds**, **Precip**
 - Wind speed is highlighted in red when ≥ 15 km/h
-- Updates live as the cursor moves over the chart; falls back to the most recent weather entry when not hovering
 
 ## Data Storage
 
