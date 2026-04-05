@@ -37,6 +37,7 @@
           @toggleFavorite="toggleFavorite(pool.name)"
         />
         <WeatherCard v-if="showWeather && !isWeekdayView" :weather="currentWeather" />
+        <StatsCard v-if="isWeekdayView" :stats="dailyAvgStats" />
       </div>
       
     </template>
@@ -48,11 +49,13 @@ import { ref, computed, onMounted } from 'vue'
 import PoolChart from './components/PoolChart.vue'
 import PoolCard from './components/PoolCard.vue'
 import WeatherCard from './components/WeatherCard.vue'
+import StatsCard from './components/StatsCard.vue'
 import { fetchPools, fetchHistory, fetchWeather, fetchDailyAvg } from './composables/api'
 
 const pools = ref([])
 const historyData = ref([])
 const dailyAvgData = ref({ labels: [], datasets: [] })
+const dailyAvgStats = ref(null)
 const weatherData = ref([])
 const selectedPool = ref('')
 const selectedDays = ref(1)
@@ -205,7 +208,7 @@ const chartData = computed(() => {
         tension: 0.3,
         fill: false,
         spanGaps: true,
-        borderDash: isSinglePool ? [] : [4, 4]
+        borderDash: isSinglePool ? [] : [4, 1]
       })
     })
 
@@ -258,6 +261,13 @@ async function fetchData() {
     if (isWeekday) {
       const data = await fetchDailyAvg(selectedPool.value)
       dailyAvgData.value = data
+      dailyAvgStats.value = {
+        weeks: data.weeks,
+        total_samples: data.total_samples,
+        date_from: data.date_from,
+        date_to: data.date_to,
+        updated_at: data.updated_at
+      }
     } else {
       const fetchDays = selectedDays.value
 
@@ -311,7 +321,15 @@ onMounted(async () => {
     }
   }
   if (selectedDays.value === 'weekday') {
-    dailyAvgData.value = await fetchDailyAvg(selectedPool.value)
+    const data = await fetchDailyAvg(selectedPool.value)
+    dailyAvgData.value = data
+    dailyAvgStats.value = {
+      weeks: data.weeks,
+      total_samples: data.total_samples,
+      date_from: data.date_from,
+      date_to: data.date_to,
+      updated_at: data.updated_at
+    }
   }
 })
 </script>

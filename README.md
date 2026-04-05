@@ -59,11 +59,13 @@ The toolbar button (☁️ / 🌤️) toggles weather overlays on/off:
 - Shows/hides weather icons on the chart
 - Shows/hides the weather tile in the pool card list
 
-### Daily Average view
+### Daily Statistics
 The "Daily Average" option shows the **recurring weekly utilization pattern**:
-- The `daily-avg-aggregator` service runs hourly, computing mean utilization and population standard deviation per pool, across available historic data
-- One line per pool showing the mean utilization per weekday and time slot
-- In **single-pool mode**, the confidence-interval band (mean ± 1σ) highlights utilization variability
+- In _single-pool mode_, the confidence-interval band (mean ± 1σ) highlights utilization variability
+- The statistics tile shows data coverage: 
+  - **Coverage** (historic time horizon taken into account for the statistics calculation)
+  - **Samples** (total measurements)
+  - **Last Update** (last cache refresh)
 
 ### Pool cards
 - One card per pool showing the current (or hovered) utilization percentage

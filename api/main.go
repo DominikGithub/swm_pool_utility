@@ -166,6 +166,7 @@ func getDailyAvg(c *gin.Context) {
 	// poolName -> slotIndex -> slotData
 	byPool := map[string]map[int]slotData{}
 	var updatedAt string
+	var totalSamples int
 
 	for rows.Next() {
 		var poolName string
@@ -180,6 +181,7 @@ func getDailyAvg(c *gin.Context) {
 			byPool[poolName] = map[int]slotData{}
 		}
 		byPool[poolName][si] = slotData{mean: mean, stddev: stddev, sampleCount: count}
+		totalSamples += count
 		if updatedAt == "" || ts > updatedAt {
 			updatedAt = ts
 		}
@@ -230,10 +232,25 @@ func getDailyAvg(c *gin.Context) {
 		datasets = append(datasets, ds)
 	}
 
+	// Compute date range and weeks in SQL to avoid go-sqlite3 datetime parsing issues.
+	var dateFrom, dateTo string
+	var weeks float64
+	db.QueryRow(`
+		SELECT
+			strftime('%Y-%m-%d', MIN(dtime)),
+			strftime('%Y-%m-%d', MAX(dtime)),
+			ROUND(MAX(1.0, (julianday(MAX(dtime)) - julianday(MIN(dtime))) / 7.0), 1)
+		FROM track_pools
+	`).Scan(&dateFrom, &dateTo, &weeks)
+
 	c.JSON(200, gin.H{
-		"labels":     labels,
-		"datasets":   datasets,
-		"updated_at": updatedAt,
+		"labels":        labels,
+		"datasets":      datasets,
+		"updated_at":    updatedAt,
+		"total_samples": totalSamples,
+		"weeks":         weeks,
+		"date_from":     dateFrom,
+		"date_to":       dateTo,
 	})
 }
 
