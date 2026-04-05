@@ -23,8 +23,8 @@ The daily average view derives aggregated statistics from a sliding window over 
 
 | Service | Setting | Default | Description |
 |---------|---------|---------|-------------|
-| pool-scraper | interval | 10 min | Scrape frequency |
-| weather-scraper | interval | 1 hour | Weather fetch frequency |
+| pool-scraper | interval | 10 min | Pool data fetch frequency |
+| weather-scraper | interval | 1 hour | Weather data fetch frequency |
 | api | port | 8085 | REST API port |
 | frontend | port | 8086 | Dashboard port |
 
@@ -44,13 +44,12 @@ This will:
 
 ### Pool Utilization
 Scrapes real-time utilization ("Auslastung") from [SWM Bäder](https://www.swm.de/baeder/auslastung).
-- Runs every **10 minutes**
-- Collects utilization percentage (0-100%) for each Munich pool
-- Excludes sauna and steam bath facilities
+- Sampling frequency **10 minutes**
+- Collects utilization percentage for each pool
 
 ### Weather Data
 Fetches current weather conditions from [Open-Meteo API](https://open-meteo.com/) for Munich coordinates (48.1372°N, 11.5755°E).
-- Runs every **1 hour**
+- Sampling frequency **1 hour**
 - Records temperature, wind speed/direction, precipitation, cloud cover, and weather type
 
 ## API Endpoints
