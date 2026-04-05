@@ -1,8 +1,6 @@
 <template>
   <header>
     <h1>SWM Pool Utilization</h1>
-  </header>
-  <main>
     <div class="controls">
       <select v-model="selectedPool" @change="fetchData">
         <option value="">All Pools</option>
@@ -21,7 +19,8 @@
         <span class="weather-icon">{{ showWeather ? '🌤️' : '☁️' }}</span>
       </button>
     </div>
-
+  </header>
+  <main>
     <div v-if="loading" class="loading">Loading...</div>
     <template v-else>
       <div class="chart-container">
