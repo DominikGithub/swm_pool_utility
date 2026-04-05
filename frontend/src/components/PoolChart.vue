@@ -547,7 +547,7 @@ onBeforeUnmount(() => {
 
 .weather-icons {
   position: absolute;
-  top: 24px;
+  top: 12px;
   left: 0;
   right: 0;
   height: 30%;
