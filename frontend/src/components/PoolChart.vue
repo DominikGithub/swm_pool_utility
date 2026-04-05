@@ -59,6 +59,10 @@ const weatherIcons = ref([])
 
 let chart = null
 
+const resizePlugin = {
+  id: 'dowResize'
+}
+
 const crosshairPlugin = {
   id: 'crosshair',
   afterEvent(chart, args) {
@@ -89,17 +93,19 @@ const crosshairPlugin = {
     ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)'
     ctx.stroke()
 
-    // Draw time-only label at top of line
+    // Draw label at top of line: "Mon 14:30"
     const tooltip = chart.tooltip
     const label = tooltip?.dataPoints?.[0]?.label
     if (label && tooltip.opacity !== 0) {
       const timeMatch = label.match(/(\d{2}:\d{2})/)
       const timeStr = timeMatch ? timeMatch[1] : label
+      const dow = getDayOfWeek(label)
+      const displayStr = dow ? `${dow.short} ${timeStr}` : timeStr
 
       ctx.font = '10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
       ctx.textAlign = 'center'
       ctx.textBaseline = 'bottom'
-      const textWidth = ctx.measureText(timeStr).width
+      const textWidth = ctx.measureText(displayStr).width
       const padding = 4
       const boxWidth = textWidth + padding * 2
       const boxHeight = 16
@@ -117,7 +123,7 @@ const crosshairPlugin = {
 
       ctx.fillStyle = '#fff'
       ctx.textAlign = 'left'
-      ctx.fillText(timeStr, boxX + padding, boxY + boxHeight - 3)
+      ctx.fillText(displayStr, boxX + padding, boxY + boxHeight - 3)
     }
 
     ctx.restore()
@@ -186,6 +192,16 @@ function parseChartLabel(label) {
     return new Date(year, month, day, hour, minute)
   }
   return null
+}
+
+const DOW_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+const DOW_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+function getDayOfWeek(label) {
+  const date = parseChartLabel(label)
+  if (!date) return null
+  const dow = date.getDay()
+  return { full: DOW_FULL[dow], short: DOW_SHORT[dow] }
 }
 
 const WEATHER_EMOJI = {
@@ -318,7 +334,7 @@ function createChart() {
   chart = new Chart(ctx, {
     type: 'line',
     data: JSON.parse(JSON.stringify(props.data)),
-    plugins: [crosshairPlugin, tempLabelPlugin],
+    plugins: [resizePlugin, crosshairPlugin, tempLabelPlugin],
     options: {
       responsive: true,
       maintainAspectRatio: false,
