@@ -25,7 +25,7 @@
     <div v-if="loading" class="loading">Loading...</div>
     <template v-else>
       <div class="chart-container">
-        <PoolChart :data="chartData" :weatherData="chartWeatherData" :predictions="predictions" @hoverData="onHoverData" />
+        <PoolChart :data="chartData" :weatherData="chartWeatherData" @hoverData="onHoverData" />
       </div>
       
       <div class="pool-list">
@@ -51,14 +51,13 @@ import PoolChart from './components/PoolChart.vue'
 import PoolCard from './components/PoolCard.vue'
 import WeatherCard from './components/WeatherCard.vue'
 import StatsCard from './components/StatsCard.vue'
-import { fetchPools, fetchHistory, fetchWeather, fetchDailyAvg, fetchPredictions, fetchPoolStatus } from './composables/api'
+import { fetchPools, fetchHistory, fetchWeather, fetchDailyAvg, fetchPoolStatus } from './composables/api'
 
 const pools = ref([])
 const historyData = ref([])
 const dailyAvgData = ref({ labels: [], datasets: [] })
 const dailyAvgStats = ref(null)
 const weatherData = ref([])
-const predictions = ref([])
 const poolStatuses = ref({})
 const selectedPool = ref('')
 const selectedDays = ref(1)
@@ -257,7 +256,6 @@ const chartData = computed(() => {
   const labels = sortedEntries.map(e => e[0])
   const timestamps = sortedEntries.map(e => e[1])
 
-  // Build actual historical datasets
   const datasets = Object.entries(poolGroups).map(([name, items], i) => ({
     label: name,
     data: items,
@@ -266,46 +264,80 @@ const chartData = computed(() => {
     fill: false
   }))
 
-  // Append prediction datasets (dashed lines) if predictions exist and view covers "now"
-  const predData = predictions.value
-  if (predData && predData.length > 0 && days <= 7) {
-    // Extend label/timestamp arrays with future prediction times
-    predData.forEach(p => {
-      const label = formatTimestamp(p.time)
-      if (!labelMap.has(label)) {
-        labelMap.set(label, p.time)
-      }
-    })
-    const predSorted = Array.from(labelMap.entries()).sort((a, b) => new Date(a[1]) - new Date(b[1]))
-    labels.length = 0
-    labels.push(...predSorted.map(e => e[0]))
-    timestamps.length = 0
-    timestamps.push(...predSorted.map(e => e[1]))
+  // Append prediction lines (dashed) for each pool — shown for views up to 3 days.
+  // Uses pred_series (all N steps) when available, falling back to the two-point
+  // pred_1h / pred_2h for backwards compatibility with old DB rows.
+  const preds = poolStatuses.value
+  if (labels.length > 0 && timestamps.length > 0 && Object.keys(preds).length > 0 && days <= 3) {
+    const now = new Date()
 
-    // Group predictions by pool
-    const predGroups = {}
-    predData.forEach(p => {
-      if (!predGroups[p.pool]) predGroups[p.pool] = []
-      predGroups[p.pool].push({ x: formatTimestamp(p.time), y: p.value })
-    })
+    // Derive the step interval from the series length of the first pool that has one.
+    // Series covers a fixed 2-hour horizon, so interval = 120 min / N steps.
+    const firstSeries = Object.values(preds).map(s => s.pred_series).find(s => Array.isArray(s) && s.length > 0)
+    const horizonMinutes = 120
+    const seriesLen = firstSeries ? firstSeries.length : 0
 
-    // Build prediction datasets (dashed, muted color)
-    Object.entries(poolGroups).forEach(([name, items], i) => {
-      const baseColor = CHART_COLORS[i % CHART_COLORS.length]
-      const predItems = predGroups[name] || []
-      datasets.push({
-        label: name + ' (predicted)',
-        data: predItems,
-        borderColor: baseColor,
-        borderDash: [5, 5],
-        borderWidth: 2,
-        tension: 0.3,
-        fill: false,
-        pointRadius: 0,
-        pointHoverRadius: 0,
-        _prediction: true
+    if (seriesLen > 0) {
+      const intervalMinutes = horizonMinutes / seriesLen
+
+      // Build shared future timestamps for all pools (same N steps).
+      const predEntries = Array.from({ length: seriesLen }, (_, i) => {
+        const t = new Date(now.getTime() + (i + 1) * intervalMinutes * 60 * 1000)
+        return { label: formatTimestamp(t.toISOString()), iso: t.toISOString() }
       })
-    })
+      predEntries.forEach(({ label, iso }) => {
+        labels.push(label)
+        timestamps.push(iso)
+      })
+
+      Object.entries(poolGroups).forEach(([name, items], i) => {
+        const status = preds[name]
+        if (!status?.pred_series?.length) return
+        const baseColor = CHART_COLORS[i % CHART_COLORS.length]
+        datasets.push({
+          label: name + ' (predicted)',
+          data: [
+            items[items.length - 1],
+            ...status.pred_series.map((val, j) => ({ x: predEntries[j].label, y: val }))
+          ],
+          borderColor: baseColor,
+          borderDash: [5, 5],
+          borderWidth: 2,
+          tension: 0.3,
+          fill: false,
+          pointRadius: 0,
+          _prediction: true
+        })
+      })
+    } else {
+      // Fallback: old rows without pred_series — draw two endpoints only.
+      const pred1h = new Date(now.getTime() + 60 * 60 * 1000)
+      const pred2h = new Date(now.getTime() + 2 * 60 * 60 * 1000)
+      const label1h = formatTimestamp(pred1h.toISOString())
+      const label2h = formatTimestamp(pred2h.toISOString())
+      labels.push(label1h, label2h)
+      timestamps.push(pred1h.toISOString(), pred2h.toISOString())
+      Object.entries(poolGroups).forEach(([name, items], i) => {
+        const status = preds[name]
+        if (!status) return
+        const baseColor = CHART_COLORS[i % CHART_COLORS.length]
+        datasets.push({
+          label: name + ' (predicted)',
+          data: [
+            items[items.length - 1],
+            { x: label1h, y: status.pred_1h },
+            { x: label2h, y: status.pred_2h }
+          ],
+          borderColor: baseColor,
+          borderDash: [5, 5],
+          borderWidth: 2,
+          tension: 0.3,
+          fill: false,
+          pointRadius: 0,
+          _prediction: true
+        })
+      })
+    }
   }
 
   return { labels, datasets, timestamps }
@@ -336,16 +368,14 @@ async function fetchData() {
       const weatherParams = new URLSearchParams()
       weatherParams.set('days', fetchDays)
       
-      const [history, weather, predData, statuses] = await Promise.all([
+      const [history, weather, statuses] = await Promise.all([
         fetchHistory(params.toString()),
         fetchWeather(weatherParams.toString()),
-        fetchPredictions(selectedPool.value, 6),
         fetchPoolStatus()
       ])
       
       historyData.value = history
       weatherData.value = weather
-      predictions.value = predData
       poolStatuses.value = Object.fromEntries(statuses.map(s => [s.name, s]))
     }
   } catch (err) {

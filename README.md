@@ -185,10 +185,96 @@ docker compose start api pool-scraper weather-scraper daily-avg-aggregator
 docker compose exec daily-avg-aggregator /app/aggregator --once
 ```
 
+### Model Retraining
+
+The `training` service runs as a daemon: it retrains all pool models on startup, then repeats every 24 hours. The `prediction-service` detects updated `.joblib` files at the start of the next 10-minute cycle and hot-reloads them — no restart needed.
+
+To force an immediate retrain:
+
+```bash
+docker compose restart training
+```
+
+To retrain manually outside the normal schedule:
+
+```bash
+# All pools
+docker compose run --rm training
+
+# Single pool
+docker compose run --rm training --pool "Michaelibad"
+
+# Validate metrics without saving models
+docker compose run --rm training --validate-only
+```
+
+> **Note:** The `avg_weekday_delta` feature depends on `daily_avg_cache`. Make sure the aggregator has run at least once before the first training cycle (`docker compose exec daily-avg-aggregator /app/aggregator --once`).
+
+#### Changing the Prediction Interval
+
+The prediction step size is controlled by `PREDICTION_INTERVAL_MINUTES` in `prediction/predict.py`.
+
+| Constant | Formula | Example (10 min) | Example (30 min) |
+|---|---|---|---|
+| `PREDICTION_INTERVALS_1H` | `60 / interval` | `6` | `2` |
+| `PREDICTION_INTERVALS_2H` | `120 / interval` | `12` | `4` |
+
+After editing `predict.py`, restart the prediction service to apply the new code:
+
+```bash
+docker compose restart prediction-service
+```
+
+_The service does **not** hot-reload code changes — only model file changes (`.joblib`) are detected automatically._
+
 
 ## Predictions
 
-###  Model Training
+### Overview
+
+Each pool tile shows a trend indicator — a circular icon with a directional arrow — giving a short-term forecast of utilization changes. The prediction service runs every 10 minutes and stores one row per pool in the `predictions` table.
+
+### Trend Direction
+
+The arrow indicates whether utilization is expected to **increase**, **decrease**, or remain **stable** in the next hour:
+
+- **Up** — utilization is predicted to rise by more than 5% in the next hour
+- **Down** — utilization is predicted to fall by more than 5% in the next hour
+- **Stable** — change is less than 5% (hidden)
+
+### Trend Strength
+
+The thin bar below the arrow shows the **magnitude** of the predicted swing. It is proportional to `trend_strength`, which is calculated as:
+
+```
+trend_strength = (|delta_1h| + |delta_2h|) / 2
+```
+
+Where:
+- `delta_1h` = predicted_utilization(1h) − current_utilization
+- `delta_2h` = predicted_utilization(2h) − current_utilization
+
+A bar at 50% width means the model expects roughly a 10% swing in either direction over the next two hours. A bar at 20% means only a ~4% change is expected. This helps distinguish a firm signal (large bar) from noise (small bar) even when the direction arrow is the same.
+
+### Prediction Services
+
+| Service | Technology | Interval |
+|---------|-----------|----------|
+| **weather-forecast-scraper** | Go | hourly — fetches 7-day weather forecast from Open-Meteo |
+| **prediction-service** | Python (scikit-learn) | 10 min — loads RandomForest models, runs inference, upserts to `predictions` |
+| **training** | Python (scikit-learn) | manual — retrains models from historical data |
+
+### Model Architecture
+
+Per-pool **RandomForestRegressor** (one model per pool), trained on:
+- **Temporal features** — hour, day-of-week, day-of-year, season, is-weekend, is-holiday, days-to-holiday
+- **Weather features** — temperature, wind speed, precipitation, cloud cover
+- **Lag features** — utilization at 10/20/30/60/120 minutes ago, 3-hour rolling mean, 30-minute change, momentum
+- **Seasonality feature** — `avg_weekday_delta`: typical utilization change over the next 30 min at this weekday+time of day, derived from `daily_avg_cache`
+
+Prediction horizon: 3 hours ahead in 10-minute steps (18 steps per cycle). The service extracts step +1h and +2h, computes the delta from current utilization, and stores `delta_1h`, `delta_2h`, and `trend_strength` per pool.
+
+### Model Training
 
 ```
 After feature engineering: 27315 rows

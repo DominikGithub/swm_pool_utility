@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strconv"
@@ -267,22 +268,14 @@ func getDailyAvg(c *gin.Context) {
 
 func getPredictions(c *gin.Context) {
 	pool := c.Query("pool")
-	hoursStr := c.DefaultQuery("hours", "6")
-	hours, _ := strconv.Atoi(hoursStr)
-	if hours <= 0 || hours > 24 {
-		hours = 6
-	}
 
-	cutoff := time.Now().UTC().Format("2006-01-02 15:04:05")
-
-	query := "SELECT pool_name, dtime, predicted_utilization FROM predictions WHERE dtime >= ?"
+	query := "SELECT pool_name, current_util, pred_1h, pred_2h, delta_1h, delta_2h, trend_strength, trend_direction FROM predictions"
 	var args []interface{}
-	args = append(args, cutoff)
 	if pool != "" {
-		query += " AND pool_name = ?"
+		query += " WHERE pool_name = ?"
 		args = append(args, pool)
 	}
-	query += " ORDER BY pool_name, dtime ASC"
+	query += " ORDER BY pool_name"
 
 	rows, err := db.Query(query, args...)
 	if err != nil {
@@ -291,35 +284,38 @@ func getPredictions(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	type PredPoint struct {
-		Pool     string  `json:"pool"`
-		Time     string  `json:"time"`
-		Value    float64 `json:"value"`
+	type TrendPoint struct {
+		Pool          string  `json:"pool"`
+		Current       float64 `json:"current"`
+		Pred1H        float64 `json:"pred_1h"`
+		Pred2H        float64 `json:"pred_2h"`
+		Delta1H       float64 `json:"delta_1h"`
+		Delta2H       float64 `json:"delta_2h"`
+		TrendStrength float64 `json:"trend_strength"`
+		Direction     string  `json:"direction"`
 	}
 
-	var predictions []PredPoint
+	var trends []TrendPoint
 	for rows.Next() {
-		var poolName string
-		var dtimeStr string
-		var value float64
-		if err := rows.Scan(&poolName, &dtimeStr, &value); err != nil {
+		var tp TrendPoint
+		if err := rows.Scan(&tp.Pool, &tp.Current, &tp.Pred1H, &tp.Pred2H, &tp.Delta1H, &tp.Delta2H, &tp.TrendStrength, &tp.Direction); err != nil {
 			continue
 		}
-		dtime, _ := time.Parse(time.RFC3339, dtimeStr)
-		predictions = append(predictions, PredPoint{
-			Pool:  poolName,
-			Time:  dtime.In(berlinLoc).Format(time.RFC3339),
-			Value: value,
-		})
+		trends = append(trends, tp)
 	}
-	c.JSON(200, predictions)
+	c.JSON(200, trends)
 }
 
 type PoolStatus struct {
-	Name       string  `json:"name"`
-	Current    int     `json:"current_util"`
-	Predicted  float64 `json:"predicted_util"`
-	Arrow      string  `json:"arrow"`
+	Name          string          `json:"name"`
+	CurrentUtil   float64         `json:"current_util"`
+	Pred1H        float64         `json:"pred_1h"`
+	Pred2H        float64         `json:"pred_2h"`
+	Delta1H       float64         `json:"delta_1h"`
+	Delta2H       float64         `json:"delta_2h"`
+	TrendStrength float64         `json:"trend_strength"`
+	Arrow         string          `json:"arrow"`
+	PredSeries    json.RawMessage `json:"pred_series"`
 }
 
 func getPoolStatus(c *gin.Context) {
@@ -335,57 +331,48 @@ func getPoolStatus(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	current := map[string]int{}
+	current := map[string]float64{}
 	for rows.Next() {
 		var name string
 		var util int
 		if err := rows.Scan(&name, &util); err != nil {
 			continue
 		}
-		current[name] = 100 - util
+		current[name] = float64(100 - util)
 	}
 
-	cutoff := time.Now().UTC().Format("2006-01-02 15:04:05")
 	predRows, err := db.Query(`
-		SELECT pool_name, MIN(dtime), predicted_utilization FROM predictions
-		WHERE dtime >= ? GROUP BY pool_name
-	`, cutoff)
+		SELECT pool_name, current_util, pred_1h, pred_2h, delta_1h, delta_2h, trend_strength, trend_direction, pred_series
+		FROM predictions
+	`)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
 	defer predRows.Close()
 
-	nextPred := map[string]float64{}
+	preds := map[string]PoolStatus{}
 	for predRows.Next() {
-		var poolName string
-		var dtimeStr string
-		var value float64
-		if err := predRows.Scan(&poolName, &dtimeStr, &value); err != nil {
+		var ps PoolStatus
+		var seriesStr *string
+		if err := predRows.Scan(&ps.Name, &ps.CurrentUtil, &ps.Pred1H, &ps.Pred2H, &ps.Delta1H, &ps.Delta2H, &ps.TrendStrength, &ps.Arrow, &seriesStr); err != nil {
 			continue
 		}
-		nextPred[poolName] = value
+		if seriesStr != nil {
+			ps.PredSeries = json.RawMessage(*seriesStr)
+		} else {
+			ps.PredSeries = json.RawMessage("null")
+		}
+		preds[ps.Name] = ps
 	}
 
 	var statuses []PoolStatus
 	for name, cur := range current {
-		pred := nextPred[name]
-		var arrow string
-		diff := pred - float64(cur)
-		switch {
-		case diff > 5:
-			arrow = "up"
-		case diff < -5:
-			arrow = "down"
-		default:
-			arrow = "stable"
+		if pred, ok := preds[name]; ok {
+			statuses = append(statuses, pred)
+		} else {
+			statuses = append(statuses, PoolStatus{Name: name, CurrentUtil: cur, Arrow: "stable"})
 		}
-		statuses = append(statuses, PoolStatus{
-			Name:      name,
-			Current:   cur,
-			Predicted: pred,
-			Arrow:     arrow,
-		})
 	}
 	c.JSON(200, statuses)
 }

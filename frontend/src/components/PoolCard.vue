@@ -3,9 +3,19 @@
     <div class="card-header">
       <h3>{{ pool.name }}</h3>
       <div class="header-right">
-        <span v-if="status" class="arrow" :class="status.arrow" :title="`Predicted: ${Math.round(status.predicted)}%`">
-          {{ arrowSymbol }}
-        </span>
+        <div
+          v-if="status && status.arrow !== 'stable'"
+          class="trend-indicator"
+          :class="status.arrow"
+          :title="`Trend: ${status.delta_1h > 0 ? '+' : ''}${status.delta_1h}% in 1h (strength: ${status.trend_strength.toFixed(1)})`"
+        >
+          <div class="arrow-circle">
+            <span class="arrow-icon" :class="status.arrow">↑</span>
+          </div>
+          <div class="strength-bar">
+            <div class="strength-fill" :style="{ width: Math.min(100, status.trend_strength * 5) + '%' }"></div>
+          </div>
+        </div>
         <button class="star-btn" :class="{ active: isFavorite }" @click.stop="$emit('toggleFavorite')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
             <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
@@ -21,24 +31,12 @@
 import { computed } from 'vue'
 
 const props = defineProps({
-  pool: {
-    type: Object,
-    required: true
-  },
-  isFavorite: {
-    type: Boolean,
-    default: false
-  },
-  status: {
-    type: Object,
-    default: null
-  }
+  pool: { type: Object, required: true },
+  isFavorite: { type: Boolean, default: false },
+  status: { type: Object, default: null }
 })
 
 defineEmits(['toggleFavorite'])
-
-const ARROWS = { up: '↑', down: '↓', stable: '→' }
-const arrowSymbol = computed(() => props.status ? (ARROWS[props.status.arrow] || '') : '')
 
 const levelClass = computed(() => {
   const v = props.pool.utility
@@ -68,30 +66,61 @@ const levelClass = computed(() => {
 .header-right {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
 }
 
-.arrow {
-  font-size: 18px;
+.trend-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.arrow-circle {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 1px solid #1a1a1a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.arrow-icon {
+  font-size: 16px;
   line-height: 1;
-  font-weight: 700;
-  width: 22px;
-  text-align: center;
-  border-radius: 4px;
-  padding: 1px 2px;
+  font-weight: 900;
 }
 
-.arrow.up {
+.arrow-icon.up {
   color: #16a34a;
+  transform: rotate(45deg);
+  display: inline-block;
 }
 
-.arrow.down {
+.arrow-icon.down {
   color: #dc2626;
+  transform: rotate(135deg);
+  display: inline-block;
 }
 
-.arrow.stable {
-  color: #9ca3af;
+.strength-bar {
+  width: 28px;
+  height: 3px;
+  background: #e5e7eb;
+  border-radius: 2px;
+  overflow: hidden;
 }
+
+.strength-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.trend-indicator.up .strength-fill { background: #16a34a; }
+.trend-indicator.down .strength-fill { background: #dc2626; }
 
 .star-btn {
   background: white;
@@ -104,6 +133,11 @@ const levelClass = computed(() => {
   border-radius: 4px;
   line-height: 1;
   box-shadow: none;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .star-btn:hover {

@@ -138,6 +138,10 @@ func fetchAndSaveForecast() error {
 		return fmt.Errorf("fetch failed: %w", err)
 	}
 
+	if _, err := db.Exec("DELETE FROM weather_forecast WHERE dtime < datetime('now', '-8 days')"); err != nil {
+		log.Printf("warning: failed to clean old forecast rows: %v", err)
+	}
+
 	h := result.Hourly
 	if len(h.Time) == 0 {
 		return fmt.Errorf("no hourly data returned")
@@ -216,6 +220,16 @@ func fetchAndSaveForecast() error {
 	}
 
 	fmt.Printf("Saved %d forecast points\n", count)
+
+	if time.Now().UTC().Weekday() == time.Sunday && time.Now().UTC().Hour() == 3 {
+		fmt.Println("Running weekly VACUUM...")
+		if _, err := db.Exec("VACUUM"); err != nil {
+			log.Printf("warning: VACUUM failed: %v", err)
+		} else {
+			fmt.Println("VACUUM complete")
+		}
+	}
+
 	return nil
 }
 
