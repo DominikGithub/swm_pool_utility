@@ -86,8 +86,7 @@ function formatNum(val) {
   color: #333;
   white-space: nowrap;
   text-align: right;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .weather-value.high-wind {
