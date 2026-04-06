@@ -54,6 +54,26 @@ FEATURE_COLS = [
 BERLIN = ZoneInfo("Europe/Berlin")
 SLOTS_PER_WEEK = 1008  # 7 days × 144 ten-minute slots
 
+FEATURE_WEIGHTS = {
+    # "util_lag_120m": 0.3,
+    # "util_lag_60m": 0.5,
+    # "util_rolling_3h": 0.5,
+    # "hour": 2.0,
+    # "wind_speed": 2.0,
+    # "temperature": 1.5,
+    # "cloud_cover": 1.5,
+}
+# NOTE: RandomForest ignores feature weights (tree splits are threshold-based, not
+# weighted sums). These are kept for reference and would apply to linear/boosting models.
+
+
+def apply_feature_weights(X, feature_names):
+    for fname, weight in FEATURE_WEIGHTS.items():
+        if fname in feature_names:
+            idx = feature_names.index(fname)
+            X[:, idx] *= weight
+    return X
+
 # ── Holiday helpers ──────────────────────────────────────────────────────────
 
 def get_german_holidays(years):
