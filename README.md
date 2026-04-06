@@ -88,6 +88,17 @@ Fetches current weather conditions from [Open-Meteo API](https://open-meteo.com/
 - Sampling frequency **1 hour**
 - Records temperature, wind speed/direction, precipitation, cloud cover, and weather type
 
+### Timezone Handling
+
+| Layer | Format | Timezone | Example |
+|-------|--------|----------|---------|
+| SWM website (source) | — | Europe/Berlin | "10:30" (local wall-clock) |
+| Open-Meteo API (source) | ISO 8601 | Europe/Berlin (requested via `&timezone=`) | `2026-04-06T10:30` |
+| SQLite storage (`dtime`) | `YYYY-MM-DD HH:MM:SS` | UTC | `2026-04-06 08:30:00` |
+| Aggregator (slot computation) | `time.Time` → slot index | UTC → Europe/Berlin via `time.In()` | slot 189 = Mon 07:30 Berlin |
+| REST API output | RFC 3339 | Europe/Berlin (with UTC offset) | `2026-04-06T10:30:00+02:00` |
+| Frontend display | `toLocaleString` | Europe/Berlin (pinned via `timeZone`) | `06.04., 10:30` |
+
 ## API Endpoints
 
 | Endpoint | Description |

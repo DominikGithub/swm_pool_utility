@@ -92,11 +92,14 @@ const crosshairPlugin = {
     // Draw label at top of line: "Mon 14:30"
     const tooltip = chart.tooltip
     const label = tooltip?.dataPoints?.[0]?.label
+    const dataIndex = tooltip?.dataPoints?.[0]?.dataIndex ?? -1
     if (label && tooltip.opacity !== 0) {
       const timeMatch = label.match(/(\d{2}:\d{2})/)
       const timeStr = timeMatch ? timeMatch[1] : label
-      const dow = getDayOfWeek(label)
-      // Handle date labels ("05.04., 14:30") and weekday-slot labels ("Mon 14:30")
+      // Use the raw ISO timestamp (history view) for accurate Berlin day-of-week,
+      // or fall back to the label prefix (daily-average "Mon 14:30" style).
+      const ts = dataIndex >= 0 ? getTimestampAt(dataIndex) : null
+      const dow = ts ? getDayOfWeek(ts) : null
       const dowPrefix = label.match(/^([A-Z][a-z]{2})\s/)
       const displayStr = dow ? `${dow.short} ${timeStr}` : (dowPrefix ? label : timeStr)
 
@@ -149,56 +152,53 @@ const tempLabelPlugin = {
   }
 }
 
-function findNearestWeather(label, maxDiffMs = 45 * 60 * 1000) {
-  if (!props.weatherData || props.weatherData.length === 0) return null
-  
-  const labelDate = parseChartLabel(label)
-  if (!labelDate) return null
-  
+// Get the raw ISO timestamp for a given chart data index.
+// props.data.timestamps is a parallel array to props.data.labels — only present
+// for the history view (not for the daily-average view which uses weekday-slot labels).
+function getTimestampAt(index) {
+  return props.data.timestamps?.[index] ?? null
+}
+
+function findNearestWeather(isoTimestamp, maxDiffMs = 45 * 60 * 1000) {
+  if (!props.weatherData || props.weatherData.length === 0 || !isoTimestamp) return null
+
+  const targetMs = new Date(isoTimestamp).getTime()
+  if (isNaN(targetMs)) return null
+
   let nearest = null
   let minDiff = Infinity
-  
+
   props.weatherData.forEach(w => {
-    const wDate = new Date(w.timestamp)
-    const diff = Math.abs(wDate.getTime() - labelDate.getTime())
+    const diff = Math.abs(new Date(w.timestamp).getTime() - targetMs)
     if (diff < minDiff && diff < maxDiffMs) {
       minDiff = diff
       nearest = w
     }
   })
-  
-  return nearest
-}
 
-function parseChartLabel(label) {
-  let match = label.match(/(\d{2})\.(\d{2})\.,\s*(\d{2}):(\d{2})/)
-  if (match) {
-    const now = new Date()
-    const day = parseInt(match[1])
-    const month = parseInt(match[2]) - 1
-    const hour = parseInt(match[3])
-    const minute = parseInt(match[4])
-    return new Date(now.getFullYear(), month, day, hour, minute)
-  }
-  match = label.match(/(\d{2})\.(\d{2})\.(\d{4}),\s*(\d{2}):(\d{2})/)
-  if (match) {
-    const day = parseInt(match[1])
-    const month = parseInt(match[2]) - 1
-    const year = parseInt(match[3])
-    const hour = parseInt(match[4])
-    const minute = parseInt(match[5])
-    return new Date(year, month, day, hour, minute)
-  }
-  return null
+  return nearest
 }
 
 const DOW_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 const DOW_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
-function getDayOfWeek(label) {
-  const date = parseChartLabel(label)
-  if (!date) return null
-  const dow = date.getDay()
+// Berlin-aware day of week from an ISO timestamp (e.g. "2026-04-06T10:30:00+02:00").
+const berlinDowFormatter = typeof Intl !== 'undefined'
+  ? new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Berlin', weekday: 'short' })
+  : null
+
+function getDayOfWeek(isoTimestamp) {
+  if (!isoTimestamp) return null
+  const d = new Date(isoTimestamp)
+  if (isNaN(d.getTime())) return null
+
+  if (berlinDowFormatter) {
+    const short = berlinDowFormatter.format(d)
+    const idx = DOW_SHORT.indexOf(short)
+    return idx >= 0 ? { full: DOW_FULL[idx], short } : null
+  }
+  // Fallback (shouldn't happen in modern browsers)
+  const dow = d.getDay()
   return { full: DOW_FULL[dow], short: DOW_SHORT[dow] }
 }
 
@@ -251,16 +251,18 @@ function updateWeatherIcons() {
   const minX = (chartLeft / wrapperWidth) * 100 + 1
   const maxX = (chartRight / wrapperWidth) * 100 - 1
 
-  // Map a weather UTC timestamp to a chart x-percent position
+  // Map a weather ISO timestamp to a chart x-percent position.
+  // Uses the raw ISO timestamps array (parallel to labels) for accurate matching.
+  const timestamps = props.data.timestamps || []
+  // Pre-compute millisecond values for all chart timestamps
+  const tsMsArray = timestamps.map(t => new Date(t).getTime())
+
   function timestampToX(timestamp) {
-    const wDate = new Date(timestamp)
+    const wMs = new Date(timestamp).getTime()
     let bestIdx = 0, bestDiff = Infinity
-    for (let i = 0; i < labels.length; i++) {
-      const lDate = parseChartLabel(labels[i])
-      if (lDate) {
-        const diff = Math.abs(lDate.getTime() - wDate.getTime())
-        if (diff < bestDiff) { bestDiff = diff; bestIdx = i }
-      }
+    for (let i = 0; i < tsMsArray.length; i++) {
+      const diff = Math.abs(tsMsArray[i] - wMs)
+      if (diff < bestDiff) { bestDiff = diff; bestIdx = i }
     }
     const norm = labels.length > 1 ? bestIdx / (labels.length - 1) : 0
     return ((chartLeft + norm * chartWidth) / wrapperWidth) * 100
@@ -380,8 +382,8 @@ function createChart() {
                 }
               })
 
-              const label = tooltip.dataPoints?.[0]?.label
-              const weather = label ? findNearestWeather(label) : null
+              const ts = getTimestampAt(dataIndex)
+              const weather = ts ? findNearestWeather(ts) : null
 
               emit('hoverData', values, { index: dataIndex, weather })
             }
@@ -462,11 +464,13 @@ function updateWeatherData() {
   const labels = props.data.labels || []
   if (labels.length === 0) return
 
+  const timestamps = props.data.timestamps || []
   let lastTemp = null
   const tempData = []
 
-  labels.forEach(label => {
-    const weather = findNearestWeather(label)
+  labels.forEach((label, index) => {
+    const ts = timestamps[index]
+    const weather = ts ? findNearestWeather(ts) : null
     if (weather) {
       lastTemp = weather.temperature
     }

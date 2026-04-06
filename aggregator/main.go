@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"time"
+	_ "time/tzdata" // embed IANA timezone database (no system tzdata package required)
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -26,29 +27,67 @@ func initDB() {
 	}
 }
 
+type accumulator struct {
+	sum   float64
+	sumSq float64
+	count int
+}
+
 func aggregate() error {
 	fmt.Println("Starting daily average aggregation...")
 
-	// Aggregate mean and variance components directly in SQL.
-	// Slot index = dow*144 + (hour*60+minute)/10, where Monday=0..Sunday=6.
-	// Population stddev: sqrt(E[X^2] - E[X]^2), computed in Go from SQL's AVG values.
-	rows, err := db.Query(`
-		SELECT
-			name,
-			((CAST(strftime('%w', dtime) AS INT) + 6) % 7) * 144
-				+ (CAST(strftime('%H', dtime) AS INT) * 60
-				   + CAST(strftime('%M', dtime) AS INT)) / 10 AS slot,
-			AVG(100 - utility)                   AS mean_util,
-			AVG((100 - utility) * (100 - utility)) AS mean_sq,
-			COUNT(*)                 AS cnt
-		FROM track_pools
-		GROUP BY name, slot
-		ORDER BY name, slot
-	`)
+	// Load the Berlin timezone so slot indices reflect local wall-clock time,
+	// including correct DST transitions (CET = UTC+1, CEST = UTC+2).
+	loc, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		return fmt.Errorf("failed to load Europe/Berlin timezone: %w", err)
+	}
+
+	// Read all raw data. Slot computation is done in Go (not SQL) so we can
+	// apply DST-aware timezone conversion before bucketing.
+	rows, err := db.Query(`SELECT name, dtime, utility FROM track_pools`)
 	if err != nil {
 		return fmt.Errorf("query failed: %w", err)
 	}
 	defer rows.Close()
+
+	// poolName -> slotIndex -> accumulator
+	data := map[string]map[int]*accumulator{}
+
+	for rows.Next() {
+		var name string
+		var dtime time.Time // go-sqlite3 parses DATETIME columns into time.Time (UTC by default)
+		var utility int
+		if err := rows.Scan(&name, &dtime, &utility); err != nil {
+			log.Printf("scan failed: %v", err)
+			continue
+		}
+
+		// Convert to Berlin local time — this is the key DST-aware step.
+		tBerlin := dtime.In(loc)
+
+		// slot_index: Monday=0 .. Sunday=6, 144 ten-minute slots per day (6*24=144).
+		// time.Weekday(): Sunday=0, Monday=1 .. Saturday=6 → remap with (+6)%7.
+		dow := (int(tBerlin.Weekday()) + 6) % 7
+		slot := dow*144 + (tBerlin.Hour()*60+tBerlin.Minute())/10
+
+		// Utilization = 100 - reported "capacity remaining" value.
+		utilization := float64(100 - utility)
+
+		if data[name] == nil {
+			data[name] = map[int]*accumulator{}
+		}
+		if data[name][slot] == nil {
+			data[name][slot] = &accumulator{}
+		}
+		acc := data[name][slot]
+		acc.sum += utilization
+		acc.sumSq += utilization * utilization
+		acc.count++
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("row iteration error: %w", err)
+	}
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -72,28 +111,23 @@ func aggregate() error {
 
 	totalSlots := 0
 	pools := map[string]bool{}
-	for rows.Next() {
-		var poolName string
-		var slot, count int
-		var mean, meanSq float64
-		if err := rows.Scan(&poolName, &slot, &mean, &meanSq, &count); err != nil {
-			log.Printf("scan failed: %v", err)
-			continue
-		}
+	for poolName, slots := range data {
+		for slot, acc := range slots {
+			mean := acc.sum / float64(acc.count)
+			// Population stddev: sqrt(E[X²] - E[X]²)
+			variance := acc.sumSq/float64(acc.count) - mean*mean
+			if variance < 0 {
+				variance = 0 // guard against floating-point rounding
+			}
+			stddev := math.Sqrt(variance)
 
-		// Population stddev: sqrt(E[X^2] - E[X]^2)
-		variance := meanSq - mean*mean
-		if variance < 0 {
-			variance = 0 // guard against floating-point rounding
+			if _, err := stmt.Exec(poolName, slot, mean, stddev, acc.count); err != nil {
+				log.Printf("upsert failed for %s slot %d: %v", poolName, slot, err)
+				continue
+			}
+			pools[poolName] = true
+			totalSlots++
 		}
-		stddev := math.Sqrt(variance)
-
-		if _, err := stmt.Exec(poolName, slot, mean, stddev, count); err != nil {
-			log.Printf("upsert failed for %s slot %d: %v", poolName, slot, err)
-			continue
-		}
-		pools[poolName] = true
-		totalSlots++
 	}
 
 	if err := tx.Commit(); err != nil {

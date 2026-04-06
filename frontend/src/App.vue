@@ -110,7 +110,10 @@ function toggleFavorite(poolName) {
 
 function formatTimestamp(isoString) {
   const date = new Date(isoString)
+  // Pin to Europe/Berlin so timestamps display in Munich local time (CET/CEST)
+  // regardless of the viewer's browser timezone.
   return date.toLocaleString('de-DE', {
+    timeZone: 'Europe/Berlin',
     day: '2-digit',
     month: '2-digit',
     hour: '2-digit',
@@ -215,7 +218,7 @@ const chartData = computed(() => {
     return { labels: apiData.labels, datasets }
   }
 
-  if (!historyData.value.length) return { labels: [], datasets: [] }
+  if (!historyData.value.length) return { labels: [], datasets: [], timestamps: [] }
 
   const days = selectedDays.value
   let filtered = historyData.value
@@ -226,21 +229,27 @@ const chartData = computed(() => {
     filtered = historyData.value.filter(d => new Date(d.timestamp) >= cutoff)
   }
   
-  const labelSet = new Set()
+  // Build a list of unique (label, isoTimestamp) pairs, ordered by time.
+  // The API returns Berlin-local RFC3339 (e.g. "2026-04-06T10:30:00+02:00"),
+  // so Date objects constructed from them are UTC-correct for comparisons.
+  const labelMap = new Map() // label -> ISO timestamp
   const poolGroups = {}
   filtered.forEach(item => {
     const label = formatTimestamp(item.timestamp)
-    labelSet.add(label)
+    if (!labelMap.has(label)) {
+      labelMap.set(label, item.timestamp)
+    }
     if (!poolGroups[item.name]) poolGroups[item.name] = []
     const utilization = Math.max(0, 100 - item.utility)
     poolGroups[item.name].push({ x: label, y: utilization })
   })
 
-  const labels = Array.from(labelSet).sort((a, b) => {
-    const dateA = new Date(a.split(', ')[0].split('.').reverse().join('-') + 'T' + a.split(', ')[1])
-    const dateB = new Date(b.split(', ')[0].split('.').reverse().join('-') + 'T' + b.split(', ')[1])
-    return dateA - dateB
+  // Sort by actual date value (reliable, no string-parsing heuristics).
+  const sortedEntries = Array.from(labelMap.entries()).sort((a, b) => {
+    return new Date(a[1]) - new Date(b[1])
   })
+  const labels = sortedEntries.map(e => e[0])
+  const timestamps = sortedEntries.map(e => e[1])
   
   const datasets = Object.entries(poolGroups).map(([name, items], i) => ({
     label: name,
@@ -250,7 +259,7 @@ const chartData = computed(() => {
     fill: false
   }))
 
-  return { labels, datasets }
+  return { labels, datasets, timestamps }
 })
 
 async function fetchData() {

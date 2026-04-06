@@ -36,12 +36,14 @@ function formatNum(val) {
 
 function formatUpdatedAt(ts) {
   if (!ts) return '--'
-  // Handle both "YYYY-MM-DD HH:MM:SS" and ISO 8601 formats
+  // The API now returns Berlin-local RFC3339 (e.g. "2026-04-06T10:30:00+02:00").
+  // Handle both that and legacy "YYYY-MM-DD HH:MM:SS" formats for robustness.
   const normalised = ts.includes('T') ? ts : ts.replace(' ', 'T')
   const withTz = normalised.endsWith('Z') || normalised.match(/[+-]\d{2}:\d{2}$/) ? normalised : normalised + 'Z'
   const d = new Date(withTz)
   if (isNaN(d.getTime())) return ts
   return d.toLocaleString('de-DE', {
+    timeZone: 'Europe/Berlin',
     day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit'
   })

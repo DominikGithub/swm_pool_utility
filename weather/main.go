@@ -111,10 +111,14 @@ func getWeatherType(code int) string {
 }
 
 func saveWeather(w *WeatherData) error {
+	// Explicitly store the current UTC timestamp. All timestamps in the database
+	// are UTC ("YYYY-MM-DD HH:MM:SS"). Timezone conversion (e.g. to Europe/Berlin)
+	// happens at read time in the API.
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 	_, err := db.Exec(`
-		INSERT INTO weather (temperature, wind_speed, wind_direction, precipitation, cloud_cover, weather_code, weather_type)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		w.Temperature, w.WindSpeed, w.WindDirection, w.Precipitation, w.CloudCover, w.WeatherCode, w.WeatherType)
+		INSERT INTO weather (dtime, temperature, wind_speed, wind_direction, precipitation, cloud_cover, weather_code, weather_type)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		now, w.Temperature, w.WindSpeed, w.WindDirection, w.Precipitation, w.CloudCover, w.WeatherCode, w.WeatherType)
 	return err
 }
 

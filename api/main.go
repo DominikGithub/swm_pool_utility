@@ -6,12 +6,16 @@ import (
 	"log"
 	"strconv"
 	"time"
+	_ "time/tzdata" // embed IANA timezone database for Europe/Berlin
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/mattn/go-sqlite3"
 )
 
-var db *sql.DB
+var (
+	db        *sql.DB
+	berlinLoc *time.Location
+)
 
 type DataPoint struct {
 	Name      string `json:"name"`
@@ -56,7 +60,9 @@ func getHistory(c *gin.Context) {
 	var args []interface{}
 
 	if days > 0 {
-		cutoff := time.Now().AddDate(0, 0, -days)
+		// Format cutoff as the same "YYYY-MM-DD HH:MM:SS" UTC string that SQLite
+		// stores, so the string comparison is unambiguous.
+		cutoff := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02 15:04:05")
 		query += " WHERE dtime >= ?"
 		args = append(args, cutoff)
 		if pool != "" {
@@ -82,22 +88,16 @@ func getHistory(c *gin.Context) {
 	var data []DataPoint
 	for rows.Next() {
 		var d DataPoint
-		if err := rows.Scan(&d.Name, &d.Timestamp, &d.Utility); err != nil {
+		var dtime time.Time // go-sqlite3 parses DATETIME columns into time.Time (UTC)
+		if err := rows.Scan(&d.Name, &dtime, &d.Utility); err != nil {
 			continue
 		}
-		d.Timestamp = formatTimestamp(d.Timestamp)
+		// Output as Berlin local time with UTC offset — unambiguous and display-ready.
+		// e.g. "2026-04-06T10:30:00+02:00" (CEST) or "2026-01-15T09:30:00+01:00" (CET)
+		d.Timestamp = dtime.In(berlinLoc).Format(time.RFC3339)
 		data = append(data, d)
 	}
 	c.JSON(200, data)
-}
-
-func formatTimestamp(ts string) string {
-	// Golang format template from numeric example date
-	t, err := time.Parse("2006-01-02 15:04:05", ts)
-	if err != nil {
-		return ts
-	}
-	return t.Format(time.RFC3339)
 }
 
 func getWeather(c *gin.Context) {
@@ -108,7 +108,7 @@ func getWeather(c *gin.Context) {
 	var args []interface{}
 
 	if days > 0 {
-		cutoff := time.Now().AddDate(0, 0, -days)
+		cutoff := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02 15:04:05")
 		query += " WHERE dtime >= ?"
 		args = append(args, cutoff)
 	}
@@ -125,11 +125,11 @@ func getWeather(c *gin.Context) {
 	var data []WeatherPoint
 	for rows.Next() {
 		var d WeatherPoint
-		var ts string
-		if err := rows.Scan(&ts, &d.Temperature, &d.WindSpeed, &d.CloudCover, &d.WeatherType, &d.Precipitation); err != nil {
+		var dtime time.Time
+		if err := rows.Scan(&dtime, &d.Temperature, &d.WindSpeed, &d.CloudCover, &d.WeatherType, &d.Precipitation); err != nil {
 			continue
 		}
-		d.Timestamp = formatTimestamp(ts)
+		d.Timestamp = dtime.In(berlinLoc).Format(time.RFC3339)
 		data = append(data, d)
 	}
 	c.JSON(200, data)
@@ -158,14 +158,14 @@ func getDailyAvg(c *gin.Context) {
 	defer rows.Close()
 
 	type slotData struct {
-		mean       float64
-		stddev     float64
+		mean        float64
+		stddev      float64
 		sampleCount int
 	}
 
 	// poolName -> slotIndex -> slotData
 	byPool := map[string]map[int]slotData{}
-	var updatedAt string
+	var updatedAt time.Time
 	var totalSamples int
 
 	for rows.Next() {
@@ -173,7 +173,7 @@ func getDailyAvg(c *gin.Context) {
 		var si int
 		var mean, stddev float64
 		var count int
-		var ts string
+		var ts time.Time
 		if err := rows.Scan(&poolName, &si, &mean, &stddev, &count, &ts); err != nil {
 			continue
 		}
@@ -182,7 +182,7 @@ func getDailyAvg(c *gin.Context) {
 		}
 		byPool[poolName][si] = slotData{mean: mean, stddev: stddev, sampleCount: count}
 		totalSamples += count
-		if updatedAt == "" || ts > updatedAt {
+		if ts.After(updatedAt) {
 			updatedAt = ts
 		}
 	}
@@ -232,23 +232,34 @@ func getDailyAvg(c *gin.Context) {
 		datasets = append(datasets, ds)
 	}
 
-	// Compute date range and weeks in SQL to avoid go-sqlite3 datetime parsing issues.
-	var dateFrom, dateTo string
-	var weeks float64
-	db.QueryRow(`
-		SELECT
-			strftime('%Y-%m-%d', MIN(dtime)),
-			strftime('%Y-%m-%d', MAX(dtime)),
-			ROUND(MAX(1.0, (julianday(MAX(dtime)) - julianday(MIN(dtime))) / 7.0), 1)
-		FROM track_pools
-	`).Scan(&dateFrom, &dateTo, &weeks)
+	// Compute date range from raw timestamps, converting to Berlin time.
+	// MIN/MAX aggregates don't carry the DATETIME column type, so go-sqlite3
+	// returns them as plain strings — scan into string and parse manually.
+	var dtimeMinStr, dtimeMaxStr string
+	db.QueryRow(`SELECT MIN(dtime), MAX(dtime) FROM track_pools`).Scan(&dtimeMinStr, &dtimeMaxStr)
+
+	dtimeMin, _ := time.Parse("2006-01-02 15:04:05", dtimeMinStr)
+	dtimeMax, _ := time.Parse("2006-01-02 15:04:05", dtimeMaxStr)
+	dateFrom := dtimeMin.In(berlinLoc).Format("2006-01-02")
+	dateTo := dtimeMax.In(berlinLoc).Format("2006-01-02")
+
+	weeksDuration := dtimeMax.Sub(dtimeMin).Hours() / (24 * 7)
+	if weeksDuration < 1.0 {
+		weeksDuration = 1.0
+	}
+
+	// Format updated_at in Berlin time
+	var updatedAtStr string
+	if !updatedAt.IsZero() {
+		updatedAtStr = updatedAt.In(berlinLoc).Format(time.RFC3339)
+	}
 
 	c.JSON(200, gin.H{
 		"labels":        labels,
 		"datasets":      datasets,
-		"updated_at":    updatedAt,
+		"updated_at":    updatedAtStr,
 		"total_samples": totalSamples,
-		"weeks":         weeks,
+		"weeks":         fmt.Sprintf("%.1f", weeksDuration),
 		"date_from":     dateFrom,
 		"date_to":       dateTo,
 	})
@@ -256,6 +267,12 @@ func getDailyAvg(c *gin.Context) {
 
 func main() {
 	var err error
+
+	berlinLoc, err = time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		log.Fatal("failed to load Europe/Berlin timezone:", err)
+	}
+
 	db, err = sql.Open("sqlite3", "/data/swm_pool_utility.db")
 	if err != nil {
 		log.Fatal(err)

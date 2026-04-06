@@ -67,8 +67,13 @@ func scrape() error {
 		return fmt.Errorf("no pools found in HTML")
 	}
 
+	// Explicitly store the current UTC timestamp. All timestamps in the database
+	// are UTC ("YYYY-MM-DD HH:MM:SS"). Timezone conversion (e.g. to Europe/Berlin)
+	// happens at read time in the API and aggregator.
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+
 	for name, utility := range poolStats {
-		_, err := db.Exec("INSERT INTO track_pools (name, utility) VALUES (?, ?)", name, utility)
+		_, err := db.Exec("INSERT INTO track_pools (name, dtime, utility) VALUES (?, ?, ?)", name, now, utility)
 		if err != nil {
 			log.Printf("failed to insert %s: %v", name, err)
 		} else {
