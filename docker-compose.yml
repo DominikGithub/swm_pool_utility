@@ -94,7 +94,7 @@ services:
       - DB_PATH=/data/swm_pool_utility.db
       - MODEL_DIR=/models
       - RETRAIN_HOUR=2          # 02:00 Europe/Berlin
-    command: ["python", "train.py", "--daemon"]
+    command: ["--daemon"]
     restart: unless-stopped
 
 volumes:

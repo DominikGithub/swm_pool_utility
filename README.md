@@ -189,19 +189,16 @@ docker compose exec daily-avg-aggregator /app/aggregator --once
 
 The `training` service runs as a daemon: it retrains all pool models on startup, then repeats every 24 hours. The `prediction-service` detects updated `.joblib` files at the start of the next 10-minute cycle and hot-reloads them — no restart needed.
 
-To force an immediate retrain:
+To force an immediate retrain (retrains now, then resumes the daily schedule):
 
 ```bash
 docker compose restart training
 ```
 
-To retrain manually outside the normal schedule:
+For targeted runs (single pool, validation):
 
 ```bash
-# All pools
-docker compose run --rm training
-
-# Single pool
+# Single pool — overrides the daemon command with an explicit flag
 docker compose run --rm training --pool "Michaelibad"
 
 # Validate metrics without saving models
@@ -216,8 +213,8 @@ The prediction step size is controlled by `PREDICTION_INTERVAL_MINUTES` in `pred
 
 | Constant | Formula | Example (10 min) | Example (30 min) |
 |---|---|---|---|
-| `PREDICTION_INTERVALS_1H` | `60 / interval` | `6` | `2` |
-| `PREDICTION_INTERVALS_2H` | `120 / interval` | `12` | `4` |
+| `PREDICTION_INTERVALS_1H` | `60 // interval` | `6` | `2` |
+| `PREDICTION_INTERVALS_2H` | `120 // interval` | `12` | `4` |
 
 After editing `predict.py`, restart the prediction service to apply the new code:
 
@@ -277,52 +274,21 @@ Prediction horizon: 3 hours ahead in 10-minute steps (18 steps per cycle). The s
 ### Model Training
 
 ```
-After feature engineering: 27315 rows
-Train: 1277 rows, Val: 1758 rows
-  Training RandomForest for 'Bad Giesing-Harlaching' on 1277 samples...
-  Bad Giesing-Harlaching — MAE: 0.6%, RMSE: 1.1%, R²: 0.979
-  Saved: /models/pool_Bad_Giesing_Harlaching.joblib
-Train: 1277 rows, Val: 1758 rows
-  Training RandomForest for 'Cosimawellenbad' on 1277 samples...
-  Cosimawellenbad — MAE: 0.5%, RMSE: 0.9%, R²: 0.994
-  Saved: /models/pool_Cosimawellenbad.joblib
-Train: 1277 rows, Val: 1758 rows
-  Training RandomForest for 'Dante-Winter-Warmfreibad' on 1277 samples...
-  Dante-Winter-Warmfreibad — MAE: 0.7%, RMSE: 1.2%, R²: 0.982
-  Saved: /models/pool_Dante_Winter_Warmfreibad.joblib
-Train: 1277 rows, Val: 1758 rows
-  Training RandomForest for 'Michaelibad' on 1277 samples...
-  Michaelibad — MAE: 0.9%, RMSE: 1.9%, R²: 0.995
-  Saved: /models/pool_Michaelibad.joblib
-Train: 1277 rows, Val: 1758 rows
-  Training RandomForest for 'Müller’sches Volksbad' on 1277 samples...
-  Müller’sches Volksbad — MAE: 1.0%, RMSE: 1.7%, R²: 0.976
-  Saved: /models/pool_Müller’sches_Volksbad.joblib
-Train: 1277 rows, Val: 1758 rows
-  Training RandomForest for 'Nordbad' on 1277 samples...
-  Nordbad — MAE: 0.8%, RMSE: 1.2%, R²: 0.993
-  Saved: /models/pool_Nordbad.joblib
-Train: 1277 rows, Val: 1758 rows
-  Training RandomForest for 'Olympia-Schwimmhalle' on 1277 samples...
-  Olympia-Schwimmhalle — MAE: 0.6%, RMSE: 0.9%, R²: 0.991
-  Saved: /models/pool_Olympia_Schwimmhalle.joblib
-Train: 1277 rows, Val: 1758 rows
-  Training RandomForest for 'Südbad' on 1277 samples...
-  Südbad — MAE: 0.8%, RMSE: 1.2%, R²: 0.989
-  Saved: /models/pool_Südbad.joblib
-Train: 1277 rows, Val: 1758 rows
-  Training RandomForest for 'Westbad' on 1277 samples...
-  Westbad — MAE: 0.6%, RMSE: 1.1%, R²: 0.997
-  Saved: /models/pool_Westbad.joblib
+Loaded 30096 rows for 9 pool(s)
+Loaded 207 weather rows
+Loaded 9072 daily-avg cache entries
+After feature engineering: 29988 rows
+  Train: 2665 rows, Val: 667 rows  (80/20 split)
 
 === Summary ===
-  Bad Giesing-Harlaching: MAE=0.6%  R²=0.979
-  Cosimawellenbad: MAE=0.5%  R²=0.994
-  Dante-Winter-Warmfreibad: MAE=0.7%  R²=0.982
-  Michaelibad: MAE=0.9%  R²=0.995
-  Müller’sches Volksbad: MAE=1.0%  R²=0.976
-  Nordbad: MAE=0.8%  R²=0.993
-  Olympia-Schwimmhalle: MAE=0.6%  R²=0.991
-  Südbad: MAE=0.8%  R²=0.989
-  Westbad: MAE=0.6%  R²=0.997
-  ```
+  Bad Giesing-Harlaching: MAE=0.5%  R²=0.984
+  Cosimawellenbad: MAE=0.5%  R²=0.995
+  Dante-Winter-Warmfreibad: MAE=0.6%  R²=0.992
+  Michaelibad: MAE=1.5%  R²=0.992
+  Müller’sches Volksbad: MAE=0.7%  R²=0.978
+  Nordbad: MAE=0.5%  R²=0.996
+  Olympia-Schwimmhalle: MAE=0.4%  R²=0.994
+  Südbad: MAE=0.6%  R²=0.991
+  Westbad: MAE=0.6%  R²=0.998
+
+```

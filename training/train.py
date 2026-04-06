@@ -41,7 +41,8 @@ FEATURE_COLS = [
     "temperature", "wind_speed", "precipitation", "cloud_cover",
     "util_lag_10m", "util_lag_20m", "util_lag_30m",
     "util_lag_60m", "util_lag_120m", "util_rolling_3h",
-    "util_change_30m", "util_momentum",
+    "util_change_10m", "util_change_30m", "util_momentum",
+    "util_accel",
     "avg_weekday_delta",
 ]
 
@@ -187,8 +188,10 @@ def add_lag_features(df):
         df.groupby("pool_name")["utilization"]
         .transform(lambda s: s.rolling(18, min_periods=1).mean())
     )
-    df["util_change_30m"] = df["util_lag_10m"] - df["util_lag_30m"]
-    df["util_momentum"] = df["util_lag_10m"] - df["util_rolling_3h"]
+    df["util_change_10m"] = df["util_lag_10m"] - df["util_lag_20m"]  # immediate 10-min delta
+    df["util_change_30m"] = df["util_lag_10m"] - df["util_lag_30m"]  # 20-min window
+    df["util_momentum"]   = df["util_lag_10m"] - df["util_rolling_3h"]
+    df["util_accel"]      = df["util_change_10m"] - (df["util_lag_20m"] - df["util_lag_30m"])  # 2nd derivative
     return df
 
 
@@ -242,11 +245,19 @@ def load_training_data(pool_name=None):
     print(f"After feature engineering: {len(df)} rows")
     return df
 
-def split_train_val(df, val_days=7):                                        # TODO is this really a valid temporal split?
-    cutoff = df["dtime"].max() - timedelta(days=val_days)
-    train = df[df["dtime"] < cutoff].copy()
-    val = df[df["dtime"] >= cutoff].copy()
-    print(f"Train: {len(train)} rows, Val: {len(val)} rows")
+def split_train_val(df, val_fraction=0.2):
+    """Chronological 80/20 train/val split.
+
+    Splits by iloc position (not by timestamp comparison) so the ratio is
+    always exact regardless of duplicate timestamps in the data.  Temporal
+    order is preserved — validation always covers the most recent 20%.
+    """
+    df = df.sort_values("dtime").reset_index(drop=True)
+    cutoff_idx = int(len(df) * (1 - val_fraction))
+    train = df.iloc[:cutoff_idx].copy()
+    val   = df.iloc[cutoff_idx:].copy()
+    pct = 100 * len(train) / len(df)
+    print(f"  Train: {len(train)} rows, Val: {len(val)} rows  ({pct:.0f}/{100-pct:.0f} split)")
     return train, val
 
 
@@ -258,8 +269,26 @@ def train_pool(df, pool_name):
     X_val = val[FEATURE_COLS].values
     y_val = val["utilization"].values
 
+    # Recency weighting: exponential decay with a 1-hour half-life so the model
+    # fits the most recent measured trend much more tightly than historical averages.
+    #
+    # weight = max(floor, 2^(-hours_old))
+    #
+    #   0 min ago  → 1.00   (most recent scrape)
+    #  60 min ago  → 0.50
+    # 120 min ago  → 0.25
+    # 4.3 h ago    → 0.05   (floor — older data still contributes but at 1/20th weight)
+    # 1 week ago   → 0.05   (same floor)
+    #
+    # The floor keeps enough historical samples for the model to learn the broad
+    # daily/weekly patterns; the steep decay ensures the live trend dominates.
+    WEIGHT_FLOOR = 0.05
+    max_dtime = train["dtime"].max()
+    hours_old = (max_dtime - train["dtime"]).dt.total_seconds() / 3600
+    sample_weights = np.maximum(WEIGHT_FLOOR, np.power(2.0, -hours_old.values))
+
     print(f"  Training RandomForest for '{pool_name}' on {len(X_train)} samples...")
-    model = RandomForestRegressor(                                                  # TODO check model parameters for improvement
+    model = RandomForestRegressor(
         n_estimators=200,
         max_depth=15,
         min_samples_split=10,
@@ -267,7 +296,7 @@ def train_pool(df, pool_name):
         n_jobs=-1,
         random_state=42,
     )
-    model.fit(X_train, y_train)
+    model.fit(X_train, y_train, sample_weight=sample_weights)
 
     y_pred = model.predict(X_val)
     mae = mean_absolute_error(y_val, y_pred)
@@ -275,6 +304,14 @@ def train_pool(df, pool_name):
     r2 = r2_score(y_val, y_pred)
 
     print(f"  {pool_name} — MAE: {mae:.1f}%, RMSE: {rmse:.1f}%, R²: {r2:.3f}")
+
+    # Feature importances — sorted descending so you can see what the model relies on.
+    importances = sorted(zip(FEATURE_COLS, model.feature_importances_), key=lambda x: -x[1])
+    print(f"  Feature importances:")
+    for fname, imp in importances:
+        bar = "█" * max(1, round(imp * 300))
+        print(f"    {fname:<25s} {imp:.4f}  {bar}")
+
     return model, {"mae": mae, "rmse": rmse, "r2": r2}
 
 

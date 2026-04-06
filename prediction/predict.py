@@ -45,7 +45,8 @@ FEATURE_COLS = [
     "temperature", "wind_speed", "precipitation", "cloud_cover",
     "util_lag_10m", "util_lag_20m", "util_lag_30m",
     "util_lag_60m", "util_lag_120m", "util_rolling_3h",
-    "util_change_30m", "util_momentum",
+    "util_change_10m", "util_change_30m", "util_momentum",
+    "util_accel",
     "avg_weekday_delta",
 ]
 
@@ -226,8 +227,10 @@ def build_features(pool_name, ft, wf, readings, hol_set, avg_cache):
         "util_lag_60m": util_t60,
         "util_lag_120m": util_t120,
         "util_rolling_3h": util_rolling,
+        "util_change_10m": util_t10 - util_t20,
         "util_change_30m": util_t10 - util_t30,
         "util_momentum": util_t10 - util_rolling,
+        "util_accel": (util_t10 - util_t20) - (util_t20 - util_t30),  # 2nd derivative: is trend accelerating?
         "avg_weekday_delta": _berlin_slot_delta(pool_name, ft, avg_cache),
     }
 
@@ -260,6 +263,39 @@ def predict_pool(pool_name, model, latest_readings, weather_df):
     preds = model.predict(X).clip(0, 100)
 
     current_util = float(readings["utilization"].iloc[-1])
+
+    # ── Trend-direction blend ────────────────────────────────────────────────
+    # The last 20 minutes of measured utilization overweights the model's
+    # historical-pattern predictions by 2:1 for the first hour of the horizon.
+    # This prevents the model from ignoring a live downtrend (or uptrend) in
+    # favour of the "typical Tuesday morning" average.
+    #
+    # Blend schedule (n_steps = 12 for 2h at 10-min intervals):
+    #   steps 1–6  (first hour)  → 2/3 trend extrapolation + 1/3 model
+    #   steps 7–12 (second hour) → linearly fades back to 0% trend / 100% model
+    #
+    # trend_velocity = mean 10-min utilization change over the last 20 min.
+    r = readings.sort_values("dtime")
+    if len(r) >= 3:
+        v1 = float(r["utilization"].iloc[-1] - r["utilization"].iloc[-2])
+        v2 = float(r["utilization"].iloc[-2] - r["utilization"].iloc[-3])
+        trend_velocity = (v1 + v2) / 2.0
+    elif len(r) >= 2:
+        trend_velocity = float(r["utilization"].iloc[-1] - r["utilization"].iloc[-2])
+    else:
+        trend_velocity = 0.0
+
+    n_steps = len(preds)
+    half_n = n_steps // 2          # step index where blend starts fading
+    for i in range(n_steps):
+        extrap = float(np.clip(current_util + (i + 1) * trend_velocity, 0, 100))
+        if i < half_n:
+            w_trend = 2.0 / 3.0    # trend 2× model for the first hour
+        else:
+            # Fade from 2/3 → 0 over the second hour
+            fade = (i - half_n) / max(1, n_steps - half_n - 1)
+            w_trend = (2.0 / 3.0) * (1.0 - fade)
+        preds[i] = float(np.clip(w_trend * extrap + (1.0 - w_trend) * float(preds[i]), 0, 100))
     pred_1h = float(preds[PREDICTION_INTERVALS_1H - 1])
     pred_2h = float(preds[PREDICTION_INTERVALS_2H - 1])
     delta_1h = pred_1h - current_util
