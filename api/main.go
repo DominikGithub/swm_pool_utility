@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strconv"
@@ -265,6 +266,117 @@ func getDailyAvg(c *gin.Context) {
 	})
 }
 
+func getPredictions(c *gin.Context) {
+	pool := c.Query("pool")
+
+	query := "SELECT pool_name, current_util, pred_1h, pred_2h, delta_1h, delta_2h, trend_strength, trend_direction FROM predictions"
+	var args []interface{}
+	if pool != "" {
+		query += " WHERE pool_name = ?"
+		args = append(args, pool)
+	}
+	query += " ORDER BY pool_name"
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	type TrendPoint struct {
+		Pool          string  `json:"pool"`
+		Current       float64 `json:"current"`
+		Pred1H        float64 `json:"pred_1h"`
+		Pred2H        float64 `json:"pred_2h"`
+		Delta1H       float64 `json:"delta_1h"`
+		Delta2H       float64 `json:"delta_2h"`
+		TrendStrength float64 `json:"trend_strength"`
+		Direction     string  `json:"direction"`
+	}
+
+	var trends []TrendPoint
+	for rows.Next() {
+		var tp TrendPoint
+		if err := rows.Scan(&tp.Pool, &tp.Current, &tp.Pred1H, &tp.Pred2H, &tp.Delta1H, &tp.Delta2H, &tp.TrendStrength, &tp.Direction); err != nil {
+			continue
+		}
+		trends = append(trends, tp)
+	}
+	c.JSON(200, trends)
+}
+
+type PoolStatus struct {
+	Name          string          `json:"name"`
+	CurrentUtil   float64         `json:"current_util"`
+	Pred1H        float64         `json:"pred_1h"`
+	Pred2H        float64         `json:"pred_2h"`
+	Delta1H       float64         `json:"delta_1h"`
+	Delta2H       float64         `json:"delta_2h"`
+	TrendStrength float64         `json:"trend_strength"`
+	Arrow         string          `json:"arrow"`
+	PredSeries    json.RawMessage `json:"pred_series"`
+}
+
+func getPoolStatus(c *gin.Context) {
+	rows, err := db.Query(`
+		SELECT name, utility FROM track_pools
+		WHERE (name, dtime) IN (
+			SELECT name, MAX(dtime) FROM track_pools GROUP BY name
+		)
+	`)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	current := map[string]float64{}
+	for rows.Next() {
+		var name string
+		var util int
+		if err := rows.Scan(&name, &util); err != nil {
+			continue
+		}
+		current[name] = float64(100 - util)
+	}
+
+	predRows, err := db.Query(`
+		SELECT pool_name, current_util, pred_1h, pred_2h, delta_1h, delta_2h, trend_strength, trend_direction, pred_series
+		FROM predictions
+	`)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	defer predRows.Close()
+
+	preds := map[string]PoolStatus{}
+	for predRows.Next() {
+		var ps PoolStatus
+		var seriesStr *string
+		if err := predRows.Scan(&ps.Name, &ps.CurrentUtil, &ps.Pred1H, &ps.Pred2H, &ps.Delta1H, &ps.Delta2H, &ps.TrendStrength, &ps.Arrow, &seriesStr); err != nil {
+			continue
+		}
+		if seriesStr != nil {
+			ps.PredSeries = json.RawMessage(*seriesStr)
+		} else {
+			ps.PredSeries = json.RawMessage("null")
+		}
+		preds[ps.Name] = ps
+	}
+
+	var statuses []PoolStatus
+	for name, cur := range current {
+		if pred, ok := preds[name]; ok {
+			statuses = append(statuses, pred)
+		} else {
+			statuses = append(statuses, PoolStatus{Name: name, CurrentUtil: cur, Arrow: "stable"})
+		}
+	}
+	c.JSON(200, statuses)
+}
+
 func main() {
 	var err error
 
@@ -286,11 +398,12 @@ func main() {
 	r := gin.Default()
 	r.Use(gin.Logger())
 
-	r.GET("/api/health", health)
+	r.GET("/api/pool-status", getPoolStatus)
 	r.GET("/api/pools", getPools)
 	r.GET("/api/history", getHistory)
 	r.GET("/api/weather", getWeather)
 	r.GET("/api/daily-avg", getDailyAvg)
+	r.GET("/api/predictions", getPredictions)
 
 	log.Println("API server running on 0.0.0.0:8085")
 	if err := r.Run("0.0.0.0:8085"); err != nil {

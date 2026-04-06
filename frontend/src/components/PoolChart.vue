@@ -49,6 +49,10 @@ const props = defineProps({
   weatherData: {
     type: Array,
     default: () => []
+  },
+  predictionTimestamps: {
+    type: Array,
+    default: () => []
   }
 })
 
@@ -90,14 +94,28 @@ const crosshairPlugin = {
     ctx.stroke()
 
     // Draw label at top of line: "Mon 14:30"
-    const tooltip = chart.tooltip
-    const label = tooltip?.dataPoints?.[0]?.label
-    if (label && tooltip.opacity !== 0) {
+    //
+    // IMPORTANT: do NOT use tooltip.dataPoints[0].label here. Chart.js mode:'index'
+    // does not update the tooltip when no historical dataset has data at the hovered
+    // position (e.g. the prediction area to the right of the last measured point).
+    // The tooltip freezes at the last valid historical position, so the label would
+    // show a stale past time (e.g. "12:30") while the crosshair line has already
+    // moved to the prediction zone.
+    //
+    // Instead, derive the category label index directly from the pixel position via
+    // the x-scale. This always reflects the actual mouse position, regardless of
+    // whether a dataset has data there.
+    const nLabels = chart.data.labels?.length ?? 0
+    if (nLabels === 0) return
+
+    const rawIdx = xScale.getValueForPixel(x)
+    const labelIdx = Math.max(0, Math.min(Math.round(rawIdx), nLabels - 1))
+    const label = chart.data.labels[labelIdx]
+
+    if (label) {
       const timeMatch = label.match(/(\d{2}:\d{2})/)
       const timeStr = timeMatch ? timeMatch[1] : label
-      // Use the raw ISO timestamp (history view) for accurate Berlin day-of-week,
-      // or fall back to the label prefix (daily-average "Mon 14:30" style).
-      const ts = getTimestampForLabel(label)
+      const ts = chart.data.timestamps?.[labelIdx] ?? getTimestampForLabel(label)
       const dow = ts ? getDayOfWeek(ts) : null
       const dowPrefix = label.match(/^([A-Z][a-z]{2})\s/)
       const displayStr = dow ? `${dow.short} ${timeStr}` : (dowPrefix ? label : timeStr)
@@ -153,17 +171,22 @@ const tempLabelPlugin = {
 
 // Get the raw ISO timestamp for a given chart data index (used by iteration-based code).
 function getTimestampAt(index) {
-  return props.data.timestamps?.[index] ?? null
+  return chart?.data?.timestamps?.[index] ?? null
 }
 
 // Look up the raw ISO timestamp for a chart label string.
 // This is used by the crosshair / tooltip instead of index-based lookup, because
 // tooltip.dataPoints[].dataIndex is the index within a dataset's data array —
 // which may differ from the label index when datasets have different lengths.
+//
+// IMPORTANT: uses chart.data (not props.data) because Chart.js draw/interaction
+// callbacks fire during Vue's async watch window — after props.data is updated but
+// before the watch callback has synced chart.data. chart.data is always consistent
+// with what is currently rendered.
 function getTimestampForLabel(label) {
-  if (!label || !props.data.labels || !props.data.timestamps) return null
-  const idx = props.data.labels.indexOf(label)
-  return idx >= 0 ? props.data.timestamps[idx] : null
+  if (!label || !chart?.data?.labels || !chart?.data?.timestamps) return null
+  const idx = chart.data.labels.indexOf(label)
+  return idx >= 0 ? chart.data.timestamps[idx] : null
 }
 
 function findNearestWeather(isoTimestamp, maxDiffMs = 45 * 60 * 1000) {
@@ -367,7 +390,7 @@ function createChart() {
         tooltip: {
           enabled: false,
           filter: function(tooltipItem) {
-            return !tooltipItem.dataset._weather && !tooltipItem.dataset._ci
+            return !tooltipItem.dataset._weather && !tooltipItem.dataset._ci && !tooltipItem.dataset._prediction
           },
           external: function(context) {
             const tooltip = context.tooltip
@@ -377,24 +400,35 @@ function createChart() {
               return
             }
 
-            const dataIndex = tooltip.dataPoints?.[0]?.dataIndex ?? -1
-            
-            if (dataIndex >= 0) {
-              const values = {}
-              chart.data.datasets?.forEach(ds => {
-                if (ds._weather || ds._ci) return
-                if (ds.data && ds.data[dataIndex] !== undefined) {
-                  const point = ds.data[dataIndex]
-                  values[ds.label] = typeof point === 'object' && point !== null ? point.y : point
-                }
-              })
+            // Derive label index from the crosshair pixel position (same as the
+            // crosshair plugin) so tiles stay in sync with the vertical line.
+            const rawIdx = chart.scales?.x?.getValueForPixel(tooltip.caretX)
+            if (rawIdx == null || rawIdx < 0) return
+            const histLen = chart.data.historyLength ?? chart.data.labels.length
+            const labelIdx = Math.max(0, Math.min(Math.round(rawIdx), chart.data.labels.length - 1))
+            // For tile values, clamp to last measured point when in prediction zone
+            const valLabelIdx = Math.min(labelIdx, histLen - 1)
+            const targetLabel = chart.data.labels[valLabelIdx]
 
-              const label = tooltip.dataPoints?.[0]?.label
-              const ts = getTimestampForLabel(label)
-              const weather = ts ? findNearestWeather(ts) : null
+            // Look up values by label string — NOT by array index.
+            // Historical datasets use {x: label, y: value} objects; array index
+            // does not equal label index when pools have different data counts.
+            const values = {}
+            chart.data.datasets?.forEach(ds => {
+              if (ds._weather || ds._ci || ds._prediction) return
+              if (!ds.data) return
+              const point = ds.data.find(p =>
+                p != null && typeof p === 'object' && p.x === targetLabel
+              )
+              if (point != null) {
+                values[ds.label] = point.y
+              }
+            })
 
-              emit('hoverData', values, { index: dataIndex, weather })
-            }
+            const ts = chart.data.timestamps?.[labelIdx] ?? getTimestampForLabel(chart.data.labels[labelIdx])
+            const weather = ts ? findNearestWeather(ts) : null
+
+            emit('hoverData', values, { index: valLabelIdx, weather })
           }
         }
       },
