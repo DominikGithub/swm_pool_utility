@@ -106,7 +106,7 @@ func extractPoolData(html string) map[string]int {
 			name := poolsSection[match[2]:match[3]]
 			name = strings.TrimSpace(name)
 
-			if name == "" || isSauna(name) {
+			if name == "" {
 				continue
 			}
 
@@ -115,7 +115,11 @@ func extractPoolData(html string) map[string]int {
 			}
 
 			startPos := match[1]
-			searchArea := poolsSection[startPos : startPos+2000]
+			endPos := startPos + 2000
+			if endPos > len(poolsSection) {
+				endPos = len(poolsSection)
+			}
+			searchArea := poolsSection[startPos:endPos]
 
 			pctMatches := rePercent.FindAllStringSubmatch(searchArea, 5)
 			for _, pctMatch := range pctMatches {
@@ -134,52 +138,39 @@ func extractPoolData(html string) map[string]int {
 	return poolStats
 }
 
+// extractPoolsSection returns only the HTML between the pools container
+// (id="bad") and the saunas container (id="sauna"). This is purely
+// structural — no pool/sauna name matching needed.
+//
+// Page structure (as of 2026-04):
+//   <div ... id="bad">
+//     <h2 ...>Echtzeit-Auslastung der Bäder</h2>
+//     ... pool <h3> entries ...
+//   </div>
+//   <div ... id="sauna">
+//     <h2 ...>Echtzeit-Auslastung der Saunen</h2>
+//     ... sauna <h3> entries ...
+//   </div>
 func extractPoolsSection(html string) string {
-	lines := strings.Split(html, "\n")
-	var result []string
-	capture := false
-	saunaFound := false
-
-	for i, line := range lines {
-		if strings.Contains(line, "Echtzeit-Auslastung") && strings.Contains(line, "Bäder") {
-			capture = true
-			saunaFound = false
-			result = []string{}
-		}
-
-		if capture {
-			result = append(result, line)
-
-			if strings.Contains(line, "sauna") || strings.Contains(line, "Sauna") {
-				if !saunaFound {
-					saunaFound = true
-				}
-			}
-
-			if saunaFound && (strings.Contains(line, "<section") || (strings.Contains(line, "<h2") && strings.Contains(line, "Sauna"))) {
-				break
-			}
-
-			if strings.Contains(line, "</main>") && i > 100 {
-				break
-			}
-		}
+	// Find the pools container: <div ... id="bad">
+	reBadStart := regexp.MustCompile(`<div[^>]*\bid="bad"[^>]*>`)
+	badLoc := reBadStart.FindStringIndex(html)
+	if badLoc == nil {
+		fmt.Println("Could not find id=\"bad\" section")
+		return ""
 	}
 
-	return strings.Join(result, "\n")
-}
+	section := html[badLoc[0]:]
 
-func isSauna(name string) bool {
-	lower := strings.ToLower(name)
-	saunaKeywords := []string{
-		"sauna", "dampf", "thermal",
+	// Find the saunas container: <div ... id="sauna">
+	// This marks the end of the pools section.
+	reSaunaStart := regexp.MustCompile(`<div[^>]*\bid="sauna"[^>]*>`)
+	saunaLoc := reSaunaStart.FindStringIndex(section)
+	if saunaLoc != nil {
+		section = section[:saunaLoc[0]]
 	}
-	for _, kw := range saunaKeywords {
-		if strings.Contains(lower, kw) {
-			return true
-		}
-	}
-	return false
+
+	return section
 }
 
 func main() {
