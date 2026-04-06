@@ -9,27 +9,6 @@ A monitoring application that tracks historical pool utilization from SWM (Stadt
 
 The daily average view derives aggregated statistics from all available historical data.
 
-## Services
-
-| Service | Technology | Description |
-|---------|------------|-------------|
-| **api** | Go/Gin | REST API serving pool utilization and weather data |
-| **pool-scraper** | Go | Collects real-time utilization data from the SWM website |
-| **weather-scraper** | Go | Collects weather data from Open-Meteo API |
-| **daily-avg-aggregator** | Go | Computes and caches daily average statistics |
-| **frontend** | Vue.js | Dashboard with historical charts and weather overlay |
-
-### Configuration
-
-| Service | Setting | Default | Description |
-|---------|---------|---------|-------------|
-| db-init | — | once | One-time setup: creates database file and tables (runs on first `./start.sh`) |
-| pool-scraper | interval | 10 min | Pool data fetch frequency |
-| weather-scraper | interval | 1 hour | Weather data fetch frequency |
-| daily-avg-aggregator | interval | 1 hour | Daily average cache refresh frequency |
-| api | port | 8085 | REST API port |
-| frontend | port | 8086 | Dashboard port |
-
 
 ## Quick Start
 
@@ -44,7 +23,7 @@ This will:
 
 See the `Backend maintenance` section below for troubleshooting setup. First time setup may require manual data collection and aggregations services manually, to fill gaps in the backend datastore due to delayed scheduled service execution.
 
-## Dashboard Features
+## Dashboard
 
 ### Chart
 - **Pool utilization** — one coloured line per pool showing utilization (%) over time
@@ -75,6 +54,27 @@ The "Daily Average" option shows the **recurring weekly utilization pattern**:
 ### Weather tile
 - Shows four metrics for the current or hovered timestamp: **Temp**, **Wind**, **Clouds**, **Precip**
 - Wind speed is highlighted in red when ≥ 15 km/h
+
+## Services
+
+| Service | Technology | Description |
+|---------|------------|-------------|
+| **api** | Go/Gin | REST API serving pool utilization and weather data |
+| **pool-scraper** | Go | Collects real-time utilization data from the SWM website |
+| **weather-scraper** | Go | Collects weather data from Open-Meteo API |
+| **daily-avg-aggregator** | Go | Computes and caches daily average statistics |
+| **frontend** | Vue.js | Dashboard with historical charts and weather overlay |
+
+### Configuration
+
+| Service | Setting | Default | Description |
+|---------|---------|---------|-------------|
+| db-init | — | once | One-time setup: creates database file and tables (runs on first `./start.sh`) |
+| pool-scraper | interval | 10 min | Pool data fetch frequency |
+| weather-scraper | interval | 1 hour | Weather data fetch frequency |
+| daily-avg-aggregator | interval | 1 hour | Daily average cache refresh frequency |
+| api | port | 8085 | REST API port |
+| frontend | port | 8086 | Dashboard port |
 
 ## Data Sources
 

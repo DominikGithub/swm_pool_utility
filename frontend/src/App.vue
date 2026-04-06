@@ -146,7 +146,8 @@ const currentPools = computed(() => {
       poolMap.set(item.name, { name: item.name, utility: utilization })
     }
   })
-  return Array.from(poolMap.values()).slice(0, 12)
+  return Array.from(poolMap.values())
+    .sort((a, b) => a.name.localeCompare(b.name))
 })
 
 const CHART_COLORS = [
