@@ -92,13 +92,12 @@ const crosshairPlugin = {
     // Draw label at top of line: "Mon 14:30"
     const tooltip = chart.tooltip
     const label = tooltip?.dataPoints?.[0]?.label
-    const dataIndex = tooltip?.dataPoints?.[0]?.dataIndex ?? -1
     if (label && tooltip.opacity !== 0) {
       const timeMatch = label.match(/(\d{2}:\d{2})/)
       const timeStr = timeMatch ? timeMatch[1] : label
       // Use the raw ISO timestamp (history view) for accurate Berlin day-of-week,
       // or fall back to the label prefix (daily-average "Mon 14:30" style).
-      const ts = dataIndex >= 0 ? getTimestampAt(dataIndex) : null
+      const ts = getTimestampForLabel(label)
       const dow = ts ? getDayOfWeek(ts) : null
       const dowPrefix = label.match(/^([A-Z][a-z]{2})\s/)
       const displayStr = dow ? `${dow.short} ${timeStr}` : (dowPrefix ? label : timeStr)
@@ -152,11 +151,19 @@ const tempLabelPlugin = {
   }
 }
 
-// Get the raw ISO timestamp for a given chart data index.
-// props.data.timestamps is a parallel array to props.data.labels — only present
-// for the history view (not for the daily-average view which uses weekday-slot labels).
+// Get the raw ISO timestamp for a given chart data index (used by iteration-based code).
 function getTimestampAt(index) {
   return props.data.timestamps?.[index] ?? null
+}
+
+// Look up the raw ISO timestamp for a chart label string.
+// This is used by the crosshair / tooltip instead of index-based lookup, because
+// tooltip.dataPoints[].dataIndex is the index within a dataset's data array —
+// which may differ from the label index when datasets have different lengths.
+function getTimestampForLabel(label) {
+  if (!label || !props.data.labels || !props.data.timestamps) return null
+  const idx = props.data.labels.indexOf(label)
+  return idx >= 0 ? props.data.timestamps[idx] : null
 }
 
 function findNearestWeather(isoTimestamp, maxDiffMs = 45 * 60 * 1000) {
@@ -382,7 +389,8 @@ function createChart() {
                 }
               })
 
-              const ts = getTimestampAt(dataIndex)
+              const label = tooltip.dataPoints?.[0]?.label
+              const ts = getTimestampForLabel(label)
               const weather = ts ? findNearestWeather(ts) : null
 
               emit('hoverData', values, { index: dataIndex, weather })
