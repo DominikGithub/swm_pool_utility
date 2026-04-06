@@ -390,7 +390,7 @@ function createChart() {
         tooltip: {
           enabled: false,
           filter: function(tooltipItem) {
-            return !tooltipItem.dataset._weather && !tooltipItem.dataset._ci
+            return !tooltipItem.dataset._weather && !tooltipItem.dataset._ci && !tooltipItem.dataset._prediction
           },
           external: function(context) {
             const tooltip = context.tooltip
@@ -400,30 +400,35 @@ function createChart() {
               return
             }
 
-            // parsed.x is the Chart.js integer category-label index — valid for both
-            // dense historical datasets and sparse prediction datasets, unlike
-            // dataIndex which is dataset-local and gives wrong positions when datasets
-            // have different lengths.
-            const labelIdx = tooltip.dataPoints?.[0]?.parsed?.x ?? -1
-            
-            if (labelIdx >= 0) {
-              const values = {}
-              chart.data.datasets?.forEach(ds => {
-                if (ds._weather || ds._ci) return
-                if (ds.data && ds.data[labelIdx] !== undefined) {
-                  const point = ds.data[labelIdx]
-                  values[ds.label] = typeof point === 'object' && point !== null ? point.y : point
-                }
-              })
+            // Derive label index from the crosshair pixel position (same as the
+            // crosshair plugin) so tiles stay in sync with the vertical line.
+            const rawIdx = chart.scales?.x?.getValueForPixel(tooltip.caretX)
+            if (rawIdx == null || rawIdx < 0) return
+            const histLen = chart.data.historyLength ?? chart.data.labels.length
+            const labelIdx = Math.max(0, Math.min(Math.round(rawIdx), chart.data.labels.length - 1))
+            // For tile values, clamp to last measured point when in prediction zone
+            const valLabelIdx = Math.min(labelIdx, histLen - 1)
+            const targetLabel = chart.data.labels[valLabelIdx]
 
-              const label = tooltip.dataPoints?.[0]?.label
-              const ts = (chart.data.timestamps?.[labelIdx] != null)
-                ? chart.data.timestamps[labelIdx]
-                : getTimestampForLabel(label)
-              const weather = ts ? findNearestWeather(ts) : null
+            // Look up values by label string — NOT by array index.
+            // Historical datasets use {x: label, y: value} objects; array index
+            // does not equal label index when pools have different data counts.
+            const values = {}
+            chart.data.datasets?.forEach(ds => {
+              if (ds._weather || ds._ci || ds._prediction) return
+              if (!ds.data) return
+              const point = ds.data.find(p =>
+                p != null && typeof p === 'object' && p.x === targetLabel
+              )
+              if (point != null) {
+                values[ds.label] = point.y
+              }
+            })
 
-              emit('hoverData', values, { index: labelIdx, weather })
-            }
+            const ts = chart.data.timestamps?.[labelIdx] ?? getTimestampForLabel(chart.data.labels[labelIdx])
+            const weather = ts ? findNearestWeather(ts) : null
+
+            emit('hoverData', values, { index: valLabelIdx, weather })
           }
         }
       },

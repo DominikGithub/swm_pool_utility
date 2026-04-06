@@ -264,6 +264,10 @@ const chartData = computed(() => {
     fill: false
   }))
 
+  // Number of historical labels before prediction labels are appended.
+  // Used by the chart to clamp the crosshair to the last measured point.
+  const historyLength = labels.length
+
   // Append prediction lines (dashed) for each pool — shown for views up to 3 days.
   // Uses pred_series (all N steps) when available, falling back to the two-point
   // pred_1h / pred_2h for backwards compatibility with old DB rows.
@@ -340,7 +344,7 @@ const chartData = computed(() => {
     }
   }
 
-  return { labels, datasets, timestamps }
+  return { labels, datasets, timestamps, historyLength }
 })
 
 async function fetchData() {

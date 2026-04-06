@@ -34,6 +34,7 @@ except ImportError:
 
 DB_PATH = os.environ.get("DB_PATH", "/data/swm_pool_utility.db")
 MODEL_DIR = os.environ.get("MODEL_DIR", "/models")
+DIRECTION_THRESHOLD = 2.0  # pp — delta_1h must exceed this to show an up/down arrow
 PREDICTION_HORIZON_HOURS = 2
 PREDICTION_INTERVAL_MINUTES = 10
 PREDICTION_INTERVALS_1H = 60 // PREDICTION_INTERVAL_MINUTES  # 1 hour ahead  → preds index PREDICTION_INTERVALS_1H-1
@@ -306,9 +307,9 @@ def predict_pool(pool_name, model, latest_readings, weather_df):
     delta_2h = pred_2h - current_util
     trend_strength = (abs(delta_1h) + abs(delta_2h)) / 2
 
-    if delta_1h > 5:    direction = "up"
-    elif delta_1h < -5: direction = "down"
-    else:               direction = "stable"
+    if delta_1h > DIRECTION_THRESHOLD:    direction = "up"
+    elif delta_1h < -DIRECTION_THRESHOLD: direction = "down"
+    else:                                 direction = "stable"
 
     # Full prediction series — one value per step over the horizon.
     # Stored as JSON so the API and frontend can render every step.
