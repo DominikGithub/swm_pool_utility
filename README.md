@@ -192,7 +192,10 @@ The `training` service runs as a daemon: it retrains all pool models on startup,
 To force an immediate retrain (retrains now, then resumes the daily schedule):
 
 ```bash
-docker compose restart training
+# Retrain and redeploy now:
+docker compose up -d --build training prediction-service
+docker compose run --rm training          # retrain now
+docker compose exec prediction-service python predict.py
 ```
 
 For targeted runs (single pool, validation):
@@ -274,21 +277,47 @@ Prediction horizon: 3 hours ahead in 10-minute steps (18 steps per cycle). The s
 ### Model Training
 
 ```
-Loaded 30096 rows for 9 pool(s)
+Loaded 30105 rows for 9 pools
 Loaded 207 weather rows
 Loaded 9072 daily-avg cache entries
-After feature engineering: 29988 rows
-  Train: 2665 rows, Val: 667 rows  (80/20 split)
+After feature engineering: 29997 rows
+Train: 2666 rows, Val: 667 rows  (80/20 split)
+
+ Example feature weight distribution:
+  Bad Giesing-Harlaching — delta MAE: 0.41pp, RMSE: 0.91pp, R²: 0.122
+  Feature importances:
+    util_momentum             0.1368  █████████████████████████████████████████
+    util_rolling_3h           0.1246  █████████████████████████████████████
+    avg_weekday_delta         0.0975  █████████████████████████████
+    util_lag_120m             0.0856  ██████████████████████████
+    util_lag_60m              0.0747  ██████████████████████
+    util_change_30m           0.0634  ███████████████████
+    util_accel                0.0543  ████████████████
+    util_lag_20m              0.0515  ███████████████
+    day_of_year               0.0490  ███████████████
+    util_change_10m           0.0465  ██████████████
+    util_lag_10m              0.0462  ██████████████
+    util_lag_30m              0.0449  █████████████
+    minute                    0.0437  █████████████
+    hour                      0.0412  ████████████
+    day_of_week               0.0136  ████
+    wind_speed                0.0100  ███
+    temperature               0.0083  ██
+    cloud_cover               0.0067  ██
+    is_weekend                0.0008  █
+    is_holiday                0.0004  █
+    precipitation             0.0003  █
+    season                    0.0000  █
+    days_to_holiday           0.0000  █
 
 === Summary ===
-  Bad Giesing-Harlaching: MAE=0.5%  R²=0.984
-  Cosimawellenbad: MAE=0.5%  R²=0.995
-  Dante-Winter-Warmfreibad: MAE=0.6%  R²=0.992
-  Michaelibad: MAE=1.5%  R²=0.992
-  Müller’sches Volksbad: MAE=0.7%  R²=0.978
-  Nordbad: MAE=0.5%  R²=0.996
-  Olympia-Schwimmhalle: MAE=0.4%  R²=0.994
-  Südbad: MAE=0.6%  R²=0.991
-  Westbad: MAE=0.6%  R²=0.998
-
+  Bad Giesing-Harlaching: MAE=0.4%  R²=0.122
+  Cosimawellenbad: MAE=0.5%  R²=0.113
+  Dante-Winter-Warmfreibad: MAE=0.4%  R²=0.068
+  Michaelibad: MAE=0.7%  R²=0.387
+  Müller’sches Volksbad: MAE=0.7%  R²=-0.090
+  Nordbad: MAE=0.5%  R²=0.153
+  Olympia-Schwimmhalle: MAE=0.4%  R²=-0.103
+  Südbad: MAE=0.6%  R²=0.004
+  Westbad: MAE=0.4%  R²=0.450
 ```

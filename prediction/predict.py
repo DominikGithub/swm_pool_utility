@@ -260,9 +260,13 @@ def predict_pool(pool_name, model, latest_readings, weather_df):
 
     pred_df = pd.DataFrame(rows)
     X = pred_df[FEATURE_COLS].values
-    preds = model.predict(X).clip(0, 100)
 
     current_util = float(readings["utilization"].iloc[-1])
+
+    # Model predicts the change from current (delta), not absolute utilization.
+    # Convert: predicted_absolute = current_util + predicted_delta.
+    delta_preds = model.predict(X)
+    preds = np.clip(current_util + delta_preds, 0, 100)
 
     # ── Trend-direction blend ────────────────────────────────────────────────
     # The last 20 minutes of measured utilization overweights the model's

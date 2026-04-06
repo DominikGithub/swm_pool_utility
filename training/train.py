@@ -265,9 +265,26 @@ def train_pool(df, pool_name):
     train, val = split_train_val(df)
 
     X_train = train[FEATURE_COLS].values
-    y_train = train["utilization"].values
-    X_val = val[FEATURE_COLS].values
-    y_val = val["utilization"].values
+    X_val   = val[FEATURE_COLS].values
+
+    # Target: change from the most recent reading (delta), not absolute utilization.
+    #
+    # Predicting the delta instead of the absolute value:
+    #   - Forces the model to learn WHEN and HOW FAST utilization changes,
+    #     not just what its typical absolute level is.
+    #   - Prevents util_lag_10m from dominating as a trivial anchor (the
+    #     absolute model just learns "stay near the last reading" → everything
+    #     looks stable → no directional arrows visible in the frontend).
+    #   - Makes hour/minute/day_of_week directly predictive of the target:
+    #     "at 11am on Mondays, utilization rises ~3%/10min" rather than
+    #     "at 11am on Mondays, utilization is ~70%".
+    #   - avg_weekday_delta is already a delta feature, so it aligns exactly
+    #     with the new target and becomes especially informative.
+    #
+    # At inference, predicted_delta + current_util = predicted_absolute_util,
+    # so the external API/frontend contract is unchanged.
+    y_train = (train["utilization"] - train["util_lag_10m"]).fillna(0).values
+    y_val   = (val["utilization"]   - val["util_lag_10m"]).fillna(0).values
 
     # Recency weighting: exponential decay with a 1-hour half-life so the model
     # fits the most recent measured trend much more tightly than historical averages.
@@ -299,11 +316,13 @@ def train_pool(df, pool_name):
     model.fit(X_train, y_train, sample_weight=sample_weights)
 
     y_pred = model.predict(X_val)
-    mae = mean_absolute_error(y_val, y_pred)
+    mae  = mean_absolute_error(y_val, y_pred)
     rmse = np.sqrt(mean_squared_error(y_val, y_pred))
-    r2 = r2_score(y_val, y_pred)
+    r2   = r2_score(y_val, y_pred)
 
-    print(f"  {pool_name} — MAE: {mae:.1f}%, RMSE: {rmse:.1f}%, R²: {r2:.3f}")
+    # Note: MAE/R² now measure delta-prediction quality, not absolute.
+    # Expect R² 0.3–0.7 (much harder than absolute) and MAE 1–4pp.
+    print(f"  {pool_name} — delta MAE: {mae:.2f}pp, RMSE: {rmse:.2f}pp, R²: {r2:.3f}")
 
     # Feature importances — sorted descending so you can see what the model relies on.
     importances = sorted(zip(FEATURE_COLS, model.feature_importances_), key=lambda x: -x[1])
