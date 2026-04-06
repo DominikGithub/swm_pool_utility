@@ -10,6 +10,9 @@ services:
              sqlite3 /data/swm_pool_utility.db 'CREATE TABLE IF NOT EXISTS track_pools(id INTEGER PRIMARY KEY AUTOINCREMENT, name VARCHAR, dtime DATETIME DEFAULT CURRENT_TIMESTAMP, utility INT);' &&
              sqlite3 /data/swm_pool_utility.db 'CREATE TABLE IF NOT EXISTS weather(id INTEGER PRIMARY KEY AUTOINCREMENT, dtime DATETIME DEFAULT CURRENT_TIMESTAMP, temperature REAL, wind_speed REAL, wind_direction REAL, precipitation REAL, cloud_cover INT, weather_code INT, weather_type VARCHAR);' &&
              sqlite3 /data/swm_pool_utility.db 'CREATE TABLE IF NOT EXISTS daily_avg_cache(id INTEGER PRIMARY KEY AUTOINCREMENT, pool_name VARCHAR NOT NULL, slot_index INT NOT NULL, mean_utilization REAL NOT NULL, std_dev REAL NOT NULL, sample_count INT NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, UNIQUE(pool_name, slot_index));' &&
+             sqlite3 /data/swm_pool_utility.db 'CREATE INDEX IF NOT EXISTS idx_track_pools_name_dtime ON track_pools(name, dtime);' &&
+             sqlite3 /data/swm_pool_utility.db 'CREATE INDEX IF NOT EXISTS idx_track_pools_dtime ON track_pools(dtime);' &&
+             sqlite3 /data/swm_pool_utility.db 'CREATE INDEX IF NOT EXISTS idx_weather_dtime ON weather(dtime);' &&
              chmod 666 /data/swm_pool_utility.db"
     restart: "no"
 

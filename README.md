@@ -69,7 +69,7 @@ The "Daily Average" option shows the **recurring weekly utilization pattern**:
 
 | Service | Setting | Default | Description |
 |---------|---------|---------|-------------|
-| db-init | — | once | One-time setup: creates database file and tables (runs on first `./start.sh`) |
+| db-init | — | once | One-time setup: creates database file, tables, indexes (runs on first `./start.sh`) |
 | pool-scraper | interval | 10 min | Pool data fetch frequency |
 | weather-scraper | interval | 1 hour | Weather data fetch frequency |
 | daily-avg-aggregator | interval | 1 hour | Daily average cache refresh frequency |
@@ -114,6 +114,11 @@ Fetches current weather conditions from [Open-Meteo API](https://open-meteo.com/
 ## Data Storage
 
 SQLite database stored in a Docker volume (`db_data`), which is mounted to the host system at `/var/lib/docker/volumes/swm_pool_utility_db_data/_data`.
+
+**Indexes:**
+- `idx_track_pools_name_dtime` on `track_pools(name, dtime)` — for per-pool time-range queries
+- `idx_track_pools_dtime` on `track_pools(dtime)` — for time-range queries across all pools
+- `idx_weather_dtime` on `weather(dtime)` — for weather time-range queries
 
 ### Tables
 
