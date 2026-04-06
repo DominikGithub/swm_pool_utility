@@ -111,6 +111,7 @@ button {
   box-shadow: 0 4px 12px rgba(0,102,204,0.25);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  height: 40px;
 }
 
 button:hover {
@@ -129,16 +130,18 @@ button.active {
 }
 
 .weather-btn {
-  padding: 0.5rem 0.75rem;
+  padding: 0 0.75rem;
   min-width: auto;
   text-transform: none;
   letter-spacing: normal;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
 }
 
 .weather-btn .weather-icon {
   font-size: 1.25rem;
-  line-height: 1;
-  margin: 0;
 }
 
 .chart-container {
@@ -230,6 +233,15 @@ button.active {
     min-width: 120px;
     padding: 0.5rem 1rem;
     font-size: 0.8rem;
+    height: 36px;
+  }
+
+  .controls .weather-btn {
+    padding: 0 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 36px;
   }
   
   .chart-container {
