@@ -152,7 +152,9 @@ const currentPools = computed(() => {
 
 const CHART_COLORS = [
   '#0066cc', '#22c55e', '#eab308', '#ef4444', '#8b5cf6',
-  '#ec4899', '#06b6d4', '#f97316', '#84cc16', '#64748b'
+  '#ec4899', '#06b6d4', '#f97316', '#84cc16', '#64748b',
+  '#a78bfa', '#34d399', '#fb923c', '#f472b6', '#2dd4bf',
+  '#c084fc', '#4ade80', '#fbbf24', '#e879f9', '#38bdf8'
 ]
 
 function hexToRgba(hex, alpha) {
