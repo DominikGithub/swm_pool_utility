@@ -176,13 +176,18 @@ const chartData = computed(() => {
 
     apiData.datasets.forEach((ds, i) => {
       const color = CHART_COLORS[i % CHART_COLORS.length]
-      const chartData = ds.data.map((v, idx) => v < 0 ? null : v)
+      const rawData = ds.data
       const stddev = ds.stddev || []
+
+      const points = apiData.labels.map((label, idx) => {
+        const v = rawData[idx]
+        return v < 0 ? null : { x: label, y: v }
+      })
 
       if (isSinglePool) {
         datasets.push({
           label: ds.label + ' (lower)',
-          data: chartData.map((v, idx) => v !== null ? Math.max(0, v - stddev[idx]) : null),
+          data: points.map((p, idx) => p !== null ? { x: p.x, y: Math.max(0, p.y - (stddev[idx] || 0)) } : null),
           borderColor: 'transparent',
           borderWidth: 0,
           pointRadius: 0,
@@ -195,7 +200,7 @@ const chartData = computed(() => {
         })
         datasets.push({
           label: ds.label + ' (upper)',
-          data: chartData.map((v, idx) => v !== null ? Math.min(100, v + stddev[idx]) : null),
+          data: points.map((p, idx) => p !== null ? { x: p.x, y: Math.min(100, p.y + (stddev[idx] || 0)) } : null),
           borderColor: 'transparent',
           borderWidth: 0,
           pointRadius: 0,
@@ -211,7 +216,7 @@ const chartData = computed(() => {
 
       datasets.push({
         label: ds.label,
-        data: chartData,
+        data: points,
         borderColor: color,
         tension: 0.3,
         fill: false,
@@ -220,7 +225,7 @@ const chartData = computed(() => {
       })
     })
 
-    return { labels: apiData.labels, datasets }
+    return { labels: apiData.labels, datasets, historyLength: apiData.labels.length }
   }
 
   if (!historyData.value.length) return { labels: [], datasets: [], timestamps: [] }
