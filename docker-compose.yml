@@ -13,6 +13,10 @@ services:
              sqlite3 /data/swm_pool_utility.db 'CREATE INDEX IF NOT EXISTS idx_track_pools_name_dtime ON track_pools(name, dtime);' &&
              sqlite3 /data/swm_pool_utility.db 'CREATE INDEX IF NOT EXISTS idx_track_pools_dtime ON track_pools(dtime);' &&
              sqlite3 /data/swm_pool_utility.db 'CREATE INDEX IF NOT EXISTS idx_weather_dtime ON weather(dtime);' &&
+             sqlite3 /data/swm_pool_utility.db 'CREATE TABLE IF NOT EXISTS weather_forecast(id INTEGER PRIMARY KEY AUTOINCREMENT, dtime DATETIME NOT NULL, temperature REAL, wind_speed REAL, precipitation REAL, cloud_cover INT, weather_code INT, weather_type VARCHAR, fetched_at DATETIME);' &&
+             sqlite3 /data/swm_pool_utility.db 'CREATE UNIQUE INDEX IF NOT EXISTS idx_weather_forecast_dtime ON weather_forecast(dtime);' &&
+             sqlite3 /data/swm_pool_utility.db 'CREATE TABLE IF NOT EXISTS predictions(id INTEGER PRIMARY KEY AUTOINCREMENT, pool_name VARCHAR NOT NULL, dtime DATETIME NOT NULL, predicted_utilization REAL NOT NULL, model_version VARCHAR, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, UNIQUE(pool_name, dtime));' &&
+             sqlite3 /data/swm_pool_utility.db 'CREATE INDEX IF NOT EXISTS idx_predictions_pool_dtime ON predictions(pool_name, dtime);' &&
              chmod 666 /data/swm_pool_utility.db"
     restart: "no"
 
@@ -61,5 +65,36 @@ services:
     depends_on:
       - api
 
+  weather-forecast-scraper:
+    build: ./weather-forecast
+    volumes:
+      - db_data:/data
+    environment:
+      - DB_PATH=/data/swm_pool_utility.db
+    restart: unless-stopped
+
+  prediction-service:
+    build: ./prediction
+    volumes:
+      - db_data:/data
+      - model_data:/models
+    environment:
+      - DB_PATH=/data/swm_pool_utility.db
+      - MODEL_DIR=/models
+    restart: unless-stopped
+    depends_on:
+      - weather-forecast-scraper
+
+  training:
+    build: ./training
+    volumes:
+      - db_data:/data
+      - model_data:/models
+    environment:
+      - DB_PATH=/data/swm_pool_utility.db
+      - MODEL_DIR=/models
+    restart: "no"
+
 volumes:
   db_data:
+  model_data:

@@ -265,6 +265,131 @@ func getDailyAvg(c *gin.Context) {
 	})
 }
 
+func getPredictions(c *gin.Context) {
+	pool := c.Query("pool")
+	hoursStr := c.DefaultQuery("hours", "6")
+	hours, _ := strconv.Atoi(hoursStr)
+	if hours <= 0 || hours > 24 {
+		hours = 6
+	}
+
+	cutoff := time.Now().UTC().Format("2006-01-02 15:04:05")
+
+	query := "SELECT pool_name, dtime, predicted_utilization FROM predictions WHERE dtime >= ?"
+	var args []interface{}
+	args = append(args, cutoff)
+	if pool != "" {
+		query += " AND pool_name = ?"
+		args = append(args, pool)
+	}
+	query += " ORDER BY pool_name, dtime ASC"
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	type PredPoint struct {
+		Pool     string  `json:"pool"`
+		Time     string  `json:"time"`
+		Value    float64 `json:"value"`
+	}
+
+	var predictions []PredPoint
+	for rows.Next() {
+		var poolName string
+		var dtimeStr string
+		var value float64
+		if err := rows.Scan(&poolName, &dtimeStr, &value); err != nil {
+			continue
+		}
+		dtime, _ := time.Parse(time.RFC3339, dtimeStr)
+		predictions = append(predictions, PredPoint{
+			Pool:  poolName,
+			Time:  dtime.In(berlinLoc).Format(time.RFC3339),
+			Value: value,
+		})
+	}
+	c.JSON(200, predictions)
+}
+
+type PoolStatus struct {
+	Name       string  `json:"name"`
+	Current    int     `json:"current_util"`
+	Predicted  float64 `json:"predicted_util"`
+	Arrow      string  `json:"arrow"`
+}
+
+func getPoolStatus(c *gin.Context) {
+	rows, err := db.Query(`
+		SELECT name, utility FROM track_pools
+		WHERE (name, dtime) IN (
+			SELECT name, MAX(dtime) FROM track_pools GROUP BY name
+		)
+	`)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	current := map[string]int{}
+	for rows.Next() {
+		var name string
+		var util int
+		if err := rows.Scan(&name, &util); err != nil {
+			continue
+		}
+		current[name] = 100 - util
+	}
+
+	cutoff := time.Now().UTC().Format("2006-01-02 15:04:05")
+	predRows, err := db.Query(`
+		SELECT pool_name, MIN(dtime), predicted_utilization FROM predictions
+		WHERE dtime >= ? GROUP BY pool_name
+	`, cutoff)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	defer predRows.Close()
+
+	nextPred := map[string]float64{}
+	for predRows.Next() {
+		var poolName string
+		var dtimeStr string
+		var value float64
+		if err := predRows.Scan(&poolName, &dtimeStr, &value); err != nil {
+			continue
+		}
+		nextPred[poolName] = value
+	}
+
+	var statuses []PoolStatus
+	for name, cur := range current {
+		pred := nextPred[name]
+		var arrow string
+		diff := pred - float64(cur)
+		switch {
+		case diff > 5:
+			arrow = "up"
+		case diff < -5:
+			arrow = "down"
+		default:
+			arrow = "stable"
+		}
+		statuses = append(statuses, PoolStatus{
+			Name:      name,
+			Current:   cur,
+			Predicted: pred,
+			Arrow:     arrow,
+		})
+	}
+	c.JSON(200, statuses)
+}
+
 func main() {
 	var err error
 
@@ -286,11 +411,12 @@ func main() {
 	r := gin.Default()
 	r.Use(gin.Logger())
 
-	r.GET("/api/health", health)
+	r.GET("/api/pool-status", getPoolStatus)
 	r.GET("/api/pools", getPools)
 	r.GET("/api/history", getHistory)
 	r.GET("/api/weather", getWeather)
 	r.GET("/api/daily-avg", getDailyAvg)
+	r.GET("/api/predictions", getPredictions)
 
 	log.Println("API server running on 0.0.0.0:8085")
 	if err := r.Run("0.0.0.0:8085"); err != nil {

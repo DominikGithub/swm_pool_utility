@@ -25,7 +25,7 @@
     <div v-if="loading" class="loading">Loading...</div>
     <template v-else>
       <div class="chart-container">
-        <PoolChart :data="chartData" :weatherData="chartWeatherData" @hoverData="onHoverData" />
+        <PoolChart :data="chartData" :weatherData="chartWeatherData" :predictions="predictions" @hoverData="onHoverData" />
       </div>
       
       <div class="pool-list">
@@ -34,6 +34,7 @@
           :key="pool.name" 
           :pool="getPoolWithValue(pool)"
           :isFavorite="favorite === pool.name"
+          :status="poolStatuses[pool.name]"
           @toggleFavorite="toggleFavorite(pool.name)"
         />
         <WeatherCard v-if="showWeather && !isWeekdayView" :weather="currentWeather" />
@@ -50,13 +51,15 @@ import PoolChart from './components/PoolChart.vue'
 import PoolCard from './components/PoolCard.vue'
 import WeatherCard from './components/WeatherCard.vue'
 import StatsCard from './components/StatsCard.vue'
-import { fetchPools, fetchHistory, fetchWeather, fetchDailyAvg } from './composables/api'
+import { fetchPools, fetchHistory, fetchWeather, fetchDailyAvg, fetchPredictions, fetchPoolStatus } from './composables/api'
 
 const pools = ref([])
 const historyData = ref([])
 const dailyAvgData = ref({ labels: [], datasets: [] })
 const dailyAvgStats = ref(null)
 const weatherData = ref([])
+const predictions = ref([])
+const poolStatuses = ref({})
 const selectedPool = ref('')
 const selectedDays = ref(1)
 const loading = ref(true)
@@ -253,7 +256,8 @@ const chartData = computed(() => {
   })
   const labels = sortedEntries.map(e => e[0])
   const timestamps = sortedEntries.map(e => e[1])
-  
+
+  // Build actual historical datasets
   const datasets = Object.entries(poolGroups).map(([name, items], i) => ({
     label: name,
     data: items,
@@ -261,6 +265,48 @@ const chartData = computed(() => {
     tension: 0.3,
     fill: false
   }))
+
+  // Append prediction datasets (dashed lines) if predictions exist and view covers "now"
+  const predData = predictions.value
+  if (predData && predData.length > 0 && days <= 7) {
+    // Extend label/timestamp arrays with future prediction times
+    predData.forEach(p => {
+      const label = formatTimestamp(p.time)
+      if (!labelMap.has(label)) {
+        labelMap.set(label, p.time)
+      }
+    })
+    const predSorted = Array.from(labelMap.entries()).sort((a, b) => new Date(a[1]) - new Date(b[1]))
+    labels.length = 0
+    labels.push(...predSorted.map(e => e[0]))
+    timestamps.length = 0
+    timestamps.push(...predSorted.map(e => e[1]))
+
+    // Group predictions by pool
+    const predGroups = {}
+    predData.forEach(p => {
+      if (!predGroups[p.pool]) predGroups[p.pool] = []
+      predGroups[p.pool].push({ x: formatTimestamp(p.time), y: p.value })
+    })
+
+    // Build prediction datasets (dashed, muted color)
+    Object.entries(poolGroups).forEach(([name, items], i) => {
+      const baseColor = CHART_COLORS[i % CHART_COLORS.length]
+      const predItems = predGroups[name] || []
+      datasets.push({
+        label: name + ' (predicted)',
+        data: predItems,
+        borderColor: baseColor,
+        borderDash: [5, 5],
+        borderWidth: 2,
+        tension: 0.3,
+        fill: false,
+        pointRadius: 0,
+        pointHoverRadius: 0,
+        _prediction: true
+      })
+    })
+  }
 
   return { labels, datasets, timestamps }
 })
@@ -290,13 +336,17 @@ async function fetchData() {
       const weatherParams = new URLSearchParams()
       weatherParams.set('days', fetchDays)
       
-      const [history, weather] = await Promise.all([
+      const [history, weather, predData, statuses] = await Promise.all([
         fetchHistory(params.toString()),
-        fetchWeather(weatherParams.toString())
+        fetchWeather(weatherParams.toString()),
+        fetchPredictions(selectedPool.value, 6),
+        fetchPoolStatus()
       ])
       
       historyData.value = history
       weatherData.value = weather
+      predictions.value = predData
+      poolStatuses.value = Object.fromEntries(statuses.map(s => [s.name, s]))
     }
   } catch (err) {
     console.error('Failed to fetch data:', err)
