@@ -269,6 +269,56 @@ func getDailyAvg(c *gin.Context) {
 	})
 }
 
+func getHourlyAvg(c *gin.Context) {
+	pool := c.Query("pool")
+
+	query := `
+		SELECT
+			name as pool_name,
+			strftime('%w', datetime(dtime, '+2 hours')) as dow,
+			strftime('%H', datetime(dtime, '+2 hours')) * 2 + 
+				CASE WHEN CAST(strftime('%M', datetime(dtime, '+2 hours')) AS INTEGER) >= 30 THEN 1 ELSE 0 END as slot,
+			AVG(utility) as mean_util,
+			COUNT(*) as sample_count,
+			SUM(CASE WHEN utility >= 99 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) as closed_fraction
+		FROM track_pools
+		WHERE dtime >= datetime('now', '-60 days')
+	`
+	var args []interface{}
+	if pool != "" {
+		query += " AND name = ?"
+		args = append(args, pool)
+	}
+	query += " GROUP BY name, dow, slot ORDER BY name, dow, slot"
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	type hourlyData struct {
+		Pool           string  `json:"pool"`
+		DayOfWeek      int     `json:"day_of_week"`
+		Slot           int     `json:"slot"`
+		Mean           float64 `json:"mean"`
+		Samples        int     `json:"samples"`
+		ClosedFraction float64 `json:"closed_fraction"`
+	}
+
+	var data []hourlyData
+	for rows.Next() {
+		var hd hourlyData
+		if err := rows.Scan(&hd.Pool, &hd.DayOfWeek, &hd.Slot, &hd.Mean, &hd.Samples, &hd.ClosedFraction); err != nil {
+			continue
+		}
+		data = append(data, hd)
+	}
+
+	c.JSON(200, data)
+}
+
 func getPredictions(c *gin.Context) {
 	pool := c.Query("pool")
 
@@ -406,6 +456,7 @@ func main() {
 	r.GET("/api/history", getHistory)
 	r.GET("/api/weather", getWeather)
 	r.GET("/api/daily-avg", getDailyAvg)
+	r.GET("/api/hourly-avg", getHourlyAvg)
 	r.GET("/api/predictions", getPredictions)
 
 	log.Println("API server running on 0.0.0.0:8085")

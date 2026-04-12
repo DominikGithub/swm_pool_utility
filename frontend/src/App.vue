@@ -15,31 +15,37 @@
         <option :value="14">Last 2 weeks</option>
         <option :value="30">Last month</option>
         <option value="weekday">Daily Statistics</option>
+        <option value="heatmap">Heatmap</option>
       </select>
       <button @click="fetchData">Refresh</button>
-      <button v-show="!isWeekdayView" @click="toggleWeather" :class="{ active: showWeather }" class="weather-btn">
+      <button v-show="!isWeekdayView && !isHeatmapView" @click="toggleWeather" :class="{ active: showWeather }" class="weather-btn">
         <span class="weather-icon">{{ showWeather ? '🌤️' : '☁️' }}</span>
       </button>
     </div>
 
     <div v-if="loading" class="loading">Loading...</div>
     <template v-else>
-      <div class="chart-container" @mouseleave="onHoverData(null, null)">
-        <PoolChart :data="chartData" :weatherData="chartWeatherData" @hoverData="onHoverData" />
+      <div v-if="isHeatmapView" class="chart-container">
+        <HeatmapCard :data="hourlyData" />
       </div>
-      
-      <div class="pool-list">
-        <PoolCard 
-          v-for="pool in currentPools" 
-          :key="pool.name" 
-          :pool="getPoolWithValue(pool)"
-          :isFavorite="favorite === pool.name"
-          :status="isWeekdayView ? null : poolStatuses[pool.name]"
-          @toggleFavorite="toggleFavorite(pool.name)"
-        />
-        <WeatherCard v-if="showWeather && !isWeekdayView" :weather="currentWeather" />
-        <StatsCard v-if="isWeekdayView" :stats="dailyAvgStats" />
-      </div>
+      <template v-else>
+        <div class="chart-container" @mouseleave="onHoverData(null, null)">
+          <PoolChart :data="chartData" :weatherData="chartWeatherData" @hoverData="onHoverData" />
+        </div>
+        
+        <div class="pool-list">
+          <PoolCard 
+            v-for="pool in currentPools" 
+            :key="pool.name" 
+            :pool="getPoolWithValue(pool)"
+            :isFavorite="favorite === pool.name"
+            :status="isWeekdayView ? null : poolStatuses[pool.name]"
+            @toggleFavorite="toggleFavorite(pool.name)"
+          />
+          <WeatherCard v-if="showWeather && !isWeekdayView" :weather="currentWeather" />
+          <StatsCard v-if="isWeekdayView" :stats="dailyAvgStats" />
+        </div>
+      </template>
       
     </template>
   </main>
@@ -51,12 +57,14 @@ import PoolChart from './components/PoolChart.vue'
 import PoolCard from './components/PoolCard.vue'
 import WeatherCard from './components/WeatherCard.vue'
 import StatsCard from './components/StatsCard.vue'
-import { fetchPools, fetchHistory, fetchWeather, fetchDailyAvg, fetchPoolStatus } from './composables/api'
+import HeatmapCard from './components/HeatmapCard.vue'
+import { fetchPools, fetchHistory, fetchWeather, fetchDailyAvg, fetchHourlyAvg, fetchPoolStatus } from './composables/api'
 
 const pools = ref([])
 const historyData = ref([])
 const dailyAvgData = ref({ labels: [], datasets: [] })
 const dailyAvgStats = ref(null)
+const hourlyData = ref([])
 const weatherData = ref([])
 const poolStatuses = ref({})
 const selectedPool = ref('')
@@ -68,6 +76,7 @@ const hoverInfo = ref(null)
 const showWeather = ref(localStorage.getItem('swm_showWeather') === 'true')
 
 const isWeekdayView = computed(() => selectedDays.value === 'weekday')
+const isHeatmapView = computed(() => selectedDays.value === 'heatmap')
 
 const emptyWeather = []
 
@@ -356,8 +365,11 @@ async function fetchData() {
   loading.value = true
   try {
     const isWeekday = selectedDays.value === 'weekday'
+    const isHeatmap = selectedDays.value === 'heatmap'
 
-    if (isWeekday) {
+    if (isHeatmap) {
+      hourlyData.value = await fetchHourlyAvg(selectedPool.value)
+    } else if (isWeekday) {
       const data = await fetchDailyAvg(selectedPool.value)
       dailyAvgData.value = data
       dailyAvgStats.value = {

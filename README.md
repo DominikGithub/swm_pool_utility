@@ -4,6 +4,11 @@ A monitoring application that tracks historical pool utilization from SWM (Stadt
 
 [![Pool Dashboard](res/pool_dashboard_20260412_1.png)](http://grid.resolve.bar:8086/)
 
+### Heatmap
+![Heatmap](res/heatmap.png)
+
+The heatmap view shows the weekly utilization pattern (based on data over last 60 days).
+
 ### Daily Statistics
 ![Daily Statistics](res/dashboard_daily_average_michaelibad.png)
 
@@ -45,6 +50,19 @@ The "Daily Statistics" option shows the **recurring weekly utilization pattern**
   - **Coverage** (historic time horizon taken into account for the statistics calculation)
   - **Samples** (total measurements)
   - **Last Update** (last cache refresh)
+
+### Heatmap (Weekly Utilization)
+The heatmap view shows the **weekly utilization pattern** across all days and time slots:
+- **Rows**: Monday to Sunday
+- **Columns**: Time of day (00:00 to 23:00, 30-minute resolution)
+- **Colors**: Green (low crowds) → Yellow → Red (high crowds)
+- **Gray cells**: Pool is closed (based on official SWM opening hours) or insufficient data
+- **Hover**: Shows utilization percentage and sample count
+- **Data range**: Last 60 days of historical data
+
+The heatmap helps identify less crowded times to visit each pool — look for green cells.
+
+**How to interpret the day labels**: The y-axis shows the day of the week.
 
 ### Pool cards
 - One card per pool showing the current (or hovered) utilization percentage
@@ -122,6 +140,8 @@ Fetches 7-day weather forecast from [Open-Meteo Forecast API](https://open-meteo
 | `GET /api/weather?days=1` | Get weather history (default: 24 hours) |
 | `GET /api/daily-avg` | Get cached daily statistics |
 | `GET /api/daily-avg?pool=X` | Get cached daily statistics for a specific pool |
+| `GET /api/hourly-avg` | Get hourly average utilization per day-of-week (heatmap data) |
+| `GET /api/hourly-avg?pool=X` | Get heatmap data for a specific pool |
 | `GET /api/predictions` | Get current predictions for all pools |
 
 ## Data Storage

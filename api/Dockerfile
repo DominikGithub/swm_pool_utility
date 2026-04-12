@@ -5,10 +5,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
 COPY *.go ./
-COPY go.mod ./
-RUN go mod tidy
-RUN CGO_ENABLED=1 GOOS=linux go build -o api
+RUN CGO_ENABLED=1 GOOS=linux go build -o api .
 
 FROM debian:12.9-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \

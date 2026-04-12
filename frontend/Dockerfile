@@ -1,8 +1,8 @@
 FROM node:20.17-alpine AS builder
 
 WORKDIR /app
-COPY package*.json ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci
 
 COPY *.js index.html vite.config.js ./
 COPY src ./src

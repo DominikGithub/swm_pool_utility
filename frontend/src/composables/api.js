@@ -21,6 +21,12 @@ export async function fetchDailyAvg(pool = '') {
   return res.json()
 }
 
+export async function fetchHourlyAvg(pool = '') {
+  const qs = pool ? `pool=${encodeURIComponent(pool)}` : ''
+  const res = await fetch(`${API_BASE}/hourly-avg${qs ? '?' + qs : ''}`)
+  return res.json()
+}
+
 export async function fetchPredictions(pool = '', hours = 6) {
   const params = new URLSearchParams()
   if (pool) params.set('pool', pool)
