@@ -7,7 +7,7 @@ A monitoring application that tracks historical pool utilization from SWM (Stadt
 ### Heatmap
 ![Heatmap](res/heatmap.png)
 
-The heatmap view shows the weekly utilization pattern (based on data over last 60 days).
+The heatmap view shows utilization patterns in 30 minute intervals (based on data over last 60 days).
 
 ### Daily Statistics
 ![Daily Statistics](res/dashboard_daily_average_michaelibad.png)
@@ -51,18 +51,12 @@ The "Daily Statistics" option shows the **recurring weekly utilization pattern**
   - **Samples** (total measurements)
   - **Last Update** (last cache refresh)
 
-### Heatmap (Weekly Utilization)
-The heatmap view shows the **weekly utilization pattern** across all days and time slots:
+### Heatmap
+The heatmap view shows the **weekly utilization pattern** across 30min time slots:
 - **Rows**: Monday to Sunday
 - **Columns**: Time of day (00:00 to 23:00, 30-minute resolution)
 - **Colors**: Green (low crowds) → Yellow → Red (high crowds)
 - **Gray cells**: Pool is closed (based on official SWM opening hours) or insufficient data
-- **Hover**: Shows utilization percentage and sample count
-- **Data range**: Last 60 days of historical data
-
-The heatmap helps identify less crowded times to visit each pool — look for green cells.
-
-**How to interpret the day labels**: The y-axis shows the day of the week.
 
 ### Pool cards
 - One card per pool showing the current (or hovered) utilization percentage
