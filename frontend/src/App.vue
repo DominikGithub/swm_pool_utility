@@ -24,7 +24,7 @@
 
     <div v-if="loading" class="loading">Loading...</div>
     <template v-else>
-      <div class="chart-container">
+      <div class="chart-container" @mouseleave="onHoverData(null, null)">
         <PoolChart :data="chartData" :weatherData="chartWeatherData" @hoverData="onHoverData" />
       </div>
       

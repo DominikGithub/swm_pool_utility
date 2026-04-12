@@ -65,7 +65,7 @@ let chart = null
 
 const crosshairPlugin = {
   id: 'crosshair',
-  afterEvent(chart, args) {
+  beforeEvent(chart, args) {
     const event = args.event
     if (event.type === 'mousemove') {
       chart._crosshairX = event.x
