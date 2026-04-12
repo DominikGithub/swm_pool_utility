@@ -23,7 +23,7 @@ echo "============================================================"
 echo " Migration 005: Enable auto_vacuum = INCREMENTAL"
 echo "============================================================"
 
-docker compose run --rm --entrypoint python training -c "
+docker compose run --rm --entrypoint python ml-training -c "
 import sqlite3, os
 
 db = os.environ.get('DB_PATH', '/data/swm_pool_utility.db')

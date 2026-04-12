@@ -34,7 +34,7 @@ services:
       retries: 3
 
   pool-scraper:
-    build: ./scraper
+    build: ./pool-scraper
     volumes:
       - db_data:/data
     environment:
@@ -49,8 +49,8 @@ services:
       - DB_PATH=/data/swm_pool_utility.db
     restart: unless-stopped
 
-  daily-avg-aggregator:
-    build: ./aggregator
+  daily-stats:
+    build: ./daily-stats
     volumes:
       - db_data:/data
     environment:
@@ -73,8 +73,8 @@ services:
       - DB_PATH=/data/swm_pool_utility.db
     restart: unless-stopped
 
-  prediction-service:
-    build: ./prediction
+  ml-prediction:
+    build: ./ml-prediction
     volumes:
       - db_data:/data
       - model_data:/models
@@ -85,8 +85,8 @@ services:
     depends_on:
       - weather-forecast-scraper
 
-  training:
-    build: ./training
+  ml-training:
+    build: ./ml-training
     volumes:
       - db_data:/data
       - model_data:/models

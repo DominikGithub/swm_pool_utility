@@ -8,7 +8,7 @@ WORKDIR /app
 COPY *.go ./
 COPY go.mod ./
 RUN go mod tidy
-RUN CGO_ENABLED=1 GOOS=linux go build -o aggregator .
+RUN CGO_ENABLED=1 GOOS=linux go build -o daily-stats .
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -18,11 +18,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY --from=builder /app/aggregator .
+COPY --from=builder /app/daily-stats .
 
-RUN touch /var/log/aggregator.log && \
-    echo '0 * * * * root /app/aggregator --once >> /var/log/aggregator.log 2>&1' > /etc/cron.d/aggregator && \
-    echo '' >> /etc/cron.d/aggregator && \
-    chmod 0644 /etc/cron.d/aggregator
+RUN touch /var/log/daily-stats.log && \
+    echo '0 * * * * root /app/daily-stats --once >> /var/log/daily-stats.log 2>&1' > /etc/cron.d/daily-stats && \
+    echo '' >> /etc/cron.d/daily-stats && \
+    chmod 0644 /etc/cron.d/daily-stats
 
-CMD cron && tail -f /var/log/aggregator.log
+CMD /app/daily-stats --once && cron && tail -f /var/log/daily-stats.log

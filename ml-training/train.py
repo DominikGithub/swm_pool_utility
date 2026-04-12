@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-Pool Utilization Prediction — Training Pipeline
-
-Trains per-pool RandomForest models on historical pool utilization + weather data.
-Saves one .joblib file per pool to the shared volume.
+ML Training — learns the relationship between time, weather, and pool attendance.
+Produces one model file per pool that the prediction service loads for inference.
 
 Usage:
     python train.py                          # train all pools
     python train.py --pool "Michaelibad"     # train single pool
     python train.py --validate-only          # evaluate without saving
+    python train.py --daemon                 # retrain daily at RETRAIN_HOUR
 """
 
 import argparse

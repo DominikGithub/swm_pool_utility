@@ -1,3 +1,6 @@
+/*
+Pool scraper — collects live occupancy data from the SWM website.
+*/
 package main
 
 import (

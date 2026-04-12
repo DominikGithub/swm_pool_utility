@@ -14,7 +14,7 @@
         <option :value="7">Last week</option>
         <option :value="14">Last 2 weeks</option>
         <option :value="30">Last month</option>
-        <option value="weekday">Daily Average</option>
+        <option value="weekday">Daily Statistics</option>
       </select>
       <button @click="fetchData">Refresh</button>
       <button v-show="!isWeekdayView" @click="toggleWeather" :class="{ active: showWeather }" class="weather-btn">
@@ -34,7 +34,7 @@
           :key="pool.name" 
           :pool="getPoolWithValue(pool)"
           :isFavorite="favorite === pool.name"
-          :status="poolStatuses[pool.name]"
+          :status="isWeekdayView ? null : poolStatuses[pool.name]"
           @toggleFavorite="toggleFavorite(pool.name)"
         />
         <WeatherCard v-if="showWeather && !isWeekdayView" :weather="currentWeather" />

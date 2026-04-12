@@ -2,12 +2,12 @@
 
 A monitoring application that tracks historical pool utilization from SWM (Stadtwerke München) swimming pools and correlates it with weather conditions. The dashboard provides insights into how weather affects pool attendance.
 
-[![Pool Dashboard](res/pool_dashboard_20260405.png)](http://grid.resolve.bar:8086/)
+[![Pool Dashboard](res/pool_dashboard_20260412.png)](http://grid.resolve.bar:8086/)
 
-### Average Utilization Statistics
-![Daily Average Statistics](res/dashboard_daily_average_michaelibad.png)
+### Daily Statistics
+![Daily Statistics](res/dashboard_daily_average_michaelibad.png)
 
-The daily average view derives aggregated statistics from all available historical data.
+The Daily Statistics view derives general per week day statistics from historical data.
 
 
 ## Quick Start
@@ -39,7 +39,7 @@ The toolbar button (☁️ / 🌤️) toggles weather overlays on/off:
 - Shows/hides the weather tile in the pool card list
 
 ### Daily Statistics
-The "Daily Average" option shows the **recurring weekly utilization pattern**:
+The "Daily Statistics" option shows the **recurring weekly utilization pattern**:
 - In _single-pool mode_, the confidence-interval band (mean ± 1σ) highlights utilization variability
 - The statistics tile shows data coverage: 
   - **Coverage** (historic time horizon taken into account for the statistics calculation)
@@ -59,10 +59,13 @@ The "Daily Average" option shows the **recurring weekly utilization pattern**:
 
 | Service | Technology | Description |
 |---------|------------|-------------|
-| **api** | Go/Gin | REST API serving pool utilization and weather data |
+| **api** | Go/Gin | REST API serving pool utilization, weather, and prediction data |
 | **pool-scraper** | Go | Collects real-time utilization data from the SWM website |
-| **weather-scraper** | Go | Collects weather data from Open-Meteo API |
-| **daily-avg-aggregator** | Go | Computes and caches daily average statistics |
+| **weather-scraper** | Go | Collects current weather data from Open-Meteo API |
+| **weather-forecast-scraper** | Go | Collects 7-day weather forecast from Open-Meteo API |
+| **daily-stats** | Go | Computes and caches daily statistics |
+| **ml-prediction** | Python (scikit-learn) | Runs utilization predictions every 10 minutes |
+| **ml-training** | Python (scikit-learn) | Retrains prediction models daily (runs as daemon) |
 | **frontend** | Vue.js | Dashboard with historical charts and weather overlay |
 
 ### Configuration
@@ -71,8 +74,11 @@ The "Daily Average" option shows the **recurring weekly utilization pattern**:
 |---------|---------|---------|-------------|
 | db-init | — | once | One-time setup: creates database file, tables, indexes (runs on first `./start.sh`) |
 | pool-scraper | interval | 10 min | Pool data fetch frequency |
-| weather-scraper | interval | 1 hour | Weather data fetch frequency |
-| daily-avg-aggregator | interval | 1 hour | Daily average cache refresh frequency |
+| weather-scraper | interval | 1 hour | Current weather fetch frequency |
+| weather-forecast-scraper | interval | 1 hour | Weather forecast fetch frequency |
+| daily-stats | interval | 1 hour | Daily statistics cache refresh frequency |
+| ml-prediction | interval | 10 min | Prediction generation frequency |
+| ml-training | interval | 24 hours | Model retraining frequency (runs as daemon) |
 | api | port | 8085 | REST API port |
 | frontend | port | 8086 | Dashboard port |
 
@@ -88,6 +94,11 @@ Fetches current weather conditions from [Open-Meteo API](https://open-meteo.com/
 - Sampling frequency **1 hour**
 - Records temperature, wind speed/direction, precipitation, cloud cover, and weather type
 
+### Weather Forecast
+Fetches 7-day weather forecast from [Open-Meteo Forecast API](https://open-meteo.com/).
+- Sampling frequency **1 hour**
+- Stores hourly forecasts for predicting future pool utilization
+
 ### Timezone Handling
 
 | Layer | Format | Timezone | Example |
@@ -95,7 +106,7 @@ Fetches current weather conditions from [Open-Meteo API](https://open-meteo.com/
 | SWM website (source) | — | Europe/Berlin | "10:30" (local wall-clock) |
 | Open-Meteo API (source) | ISO 8601 | Europe/Berlin (requested via `&timezone=`) | `2026-04-06T10:30` |
 | SQLite storage (`dtime`) | `YYYY-MM-DD HH:MM:SS` | UTC | `2026-04-06 08:30:00` |
-| Aggregator (slot computation) | `time.Time` → slot index | UTC → Europe/Berlin via `time.In()` | slot 189 = Mon 07:30 Berlin |
+| daily-stats (slot computation) | `time.Time` → slot index | UTC → Europe/Berlin via `time.In()` | slot 189 = Mon 07:30 Berlin |
 | REST API output | RFC 3339 | Europe/Berlin (with UTC offset) | `2026-04-06T10:30:00+02:00` |
 | Frontend display | `toLocaleString` | Europe/Berlin (pinned via `timeZone`) | `06.04., 10:30` |
 
@@ -105,20 +116,17 @@ Fetches current weather conditions from [Open-Meteo API](https://open-meteo.com/
 |----------|-------------|
 | `GET /api/health` | Health check |
 | `GET /api/pools` | List all tracked pools |
+| `GET /api/pool-status` | Current utilization status for all pools |
 | `GET /api/history?days=1` | Get pool history (default: 24 hours) |
 | `GET /api/history?pool=X&days=30` | Filter by specific pool |
 | `GET /api/weather?days=1` | Get weather history (default: 24 hours) |
-| `GET /api/daily-avg` | Get cached daily average statistics |
-| `GET /api/daily-avg?pool=X` | Get cached daily average statistics for a specific pool |
+| `GET /api/daily-avg` | Get cached daily statistics |
+| `GET /api/daily-avg?pool=X` | Get cached daily statistics for a specific pool |
+| `GET /api/predictions` | Get current predictions for all pools |
 
 ## Data Storage
 
 SQLite database stored in a Docker volume (`db_data`), which is mounted to the host system at `/var/lib/docker/volumes/swm_pool_utility_db_data/_data`.
-
-**Indexes:**
-- `idx_track_pools_name_dtime` on `track_pools(name, dtime)` — for per-pool time-range queries
-- `idx_track_pools_dtime` on `track_pools(dtime)` — for time-range queries across all pools
-- `idx_weather_dtime` on `weather(dtime)` — for weather time-range queries
 
 ### Tables
 
@@ -151,6 +159,33 @@ SQLite database stored in a Docker volume (`db_data`), which is mounted to the h
 | sample_count | INT | Number of data points contributing to the mean |
 | updated_at | DATETIME | Timestamp of the last cache refresh |
 
+**weather_forecast**
+| Column | Type | Description |
+|--------|------|-------------|
+| dtime | DATETIME | Forecast timestamp |
+| temperature | REAL | Forecast temperature in °C |
+| wind_speed | REAL | Forecast wind speed in km/h |
+| precipitation | REAL | Forecast precipitation in mm |
+| cloud_cover | INT | Cloud cover percentage (0-100) |
+| weather_code | INT | WMO weather code |
+| weather_type | VARCHAR | Simplified weather type |
+| fetched_at | DATETIME | When the forecast was fetched |
+
+**predictions**
+| Column | Type | Description |
+|--------|------|-------------|
+| pool_name | VARCHAR | Pool name |
+| current_util | REAL | Current utilization percentage |
+| pred_1h | REAL | Predicted utilization in 1 hour |
+| pred_2h | REAL | Predicted utilization in 2 hours |
+| delta_1h | REAL | Change in utilization after 1 hour |
+| delta_2h | REAL | Change in utilization after 2 hours |
+| trend_strength | REAL | Magnitude of predicted swing (0-1) |
+| trend_direction | VARCHAR | "up", "down", or "stable" |
+| model_version | VARCHAR | Version identifier of the model |
+| created_at | DATETIME | When the prediction was generated |
+| pred_series | TEXT | JSON array of 12 predictions (2h in 10-min steps) |
+
 ## Backend Maintenance
 
 The SQLite database is stored in a Docker volume (`db_data`). Use the following commands to back up and restore.
@@ -169,50 +204,50 @@ docker cp swm_pool_utility-api-1:/data/swm_pool_utility.db ./backup.db
 docker volume inspect swm_pool_utility_db_data --format '{{ .Mountpoint }}'
 
 # Stop the containers to ensure file consistency
-docker compose stop api pool-scraper weather-scraper daily-avg-aggregator
+docker compose stop api pool-scraper weather-scraper daily-stats
 
 # Replace the .db file on the hosts docker volume mount point
 cp ./backup.db $(docker volume inspect swm_pool_utility_db_data --format '{{ .Mountpoint }}')/swm_pool_utility.db
 
 # Restart services
-docker compose start api pool-scraper weather-scraper daily-avg-aggregator
+docker compose start api pool-scraper weather-scraper daily-stats
 ```
 
 ### Trigger Average Statistics Update
 
 ```bash
 # Run backend statistics updater manually
-docker compose exec daily-avg-aggregator /app/aggregator --once
+docker compose exec daily-stats /app/daily-stats --once
 ```
 
 ### Model Retraining
 
-The `training` service runs as a daemon: it retrains all pool models on startup, then repeats every 24 hours. The `prediction-service` detects updated `.joblib` files at the start of the next 10-minute cycle and hot-reloads them — no restart needed.
+The `ml-training` service runs as a daemon: it retrains all pool models on startup, then repeats every 24 hours. The `ml-prediction` service detects updated `.joblib` files at the start of the next 10-minute cycle and hot-reloads them — no restart needed.
 
 To force an immediate retrain (retrains now, then resumes the daily schedule):
 
 ```bash
 # Retrain and redeploy now:
-docker compose up -d --build training prediction-service
-docker compose run --rm training          # retrain now
-docker compose exec prediction-service python predict.py
+docker compose up -d --build ml-training ml-prediction
+docker compose run --rm ml-training          # retrain now
+docker compose exec ml-prediction python predict.py
 ```
 
 For targeted runs (single pool, validation):
 
 ```bash
 # Single pool — overrides the daemon command with an explicit flag
-docker compose run --rm training --pool "Michaelibad"
+docker compose run --rm ml-training --pool "Michaelibad"
 
 # Validate metrics without saving models
-docker compose run --rm training --validate-only
+docker compose run --rm ml-training --validate-only
 ```
 
-> **Note:** The `avg_weekday_delta` feature depends on `daily_avg_cache`. Make sure the aggregator has run at least once before the first training cycle (`docker compose exec daily-avg-aggregator /app/aggregator --once`).
+> **Note:** The `avg_weekday_delta` feature depends on `daily_avg_cache`. Make sure `daily-stats` has run at least once before the first training cycle (`docker compose exec daily-stats /app/daily-stats --once`).
 
 #### Changing the Prediction Interval
 
-The prediction step size is controlled by `PREDICTION_INTERVAL_MINUTES` in `prediction/predict.py`.
+The prediction step size is controlled by `PREDICTION_INTERVAL_MINUTES` in `ml-prediction/predict.py`.
 
 | Constant | Formula | Example (10 min) | Example (30 min) |
 |---|---|---|---|
@@ -222,7 +257,7 @@ The prediction step size is controlled by `PREDICTION_INTERVAL_MINUTES` in `pred
 After editing `predict.py`, restart the prediction service to apply the new code:
 
 ```bash
-docker compose restart prediction-service
+docker compose restart ml-prediction
 ```
 
 _The service does **not** hot-reload code changes — only model file changes (`.joblib`) are detected automatically._
@@ -261,8 +296,8 @@ A bar at 50% width means the model expects roughly a 10% swing in either directi
 | Service | Technology | Interval |
 |---------|-----------|----------|
 | **weather-forecast-scraper** | Go | hourly — fetches 7-day weather forecast from Open-Meteo |
-| **prediction-service** | Python (scikit-learn) | 10 min — loads RandomForest models, runs inference, upserts to `predictions` |
-| **training** | Python (scikit-learn) | manual — retrains models from historical data |
+| **ml-prediction** | Python (scikit-learn) | 10 min — loads RandomForest models, runs inference, upserts to `predictions` |
+| **ml-training** | Python (scikit-learn) | manual — retrains models from historical data |
 
 ### Model Architecture
 
@@ -272,52 +307,53 @@ Per-pool **RandomForestRegressor** (one model per pool), trained on:
 - **Lag features** — utilization at 10/20/30/60/120 minutes ago, 3-hour rolling mean, 30-minute change, momentum
 - **Seasonality feature** — `avg_weekday_delta`: typical utilization change over the next 30 min at this weekday+time of day, derived from `daily_avg_cache`
 
-Prediction horizon: 3 hours ahead in 10-minute steps (18 steps per cycle). The service extracts step +1h and +2h, computes the delta from current utilization, and stores `delta_1h`, `delta_2h`, and `trend_strength` per pool.
+Prediction horizon: 2 hours ahead in 10-minute steps (12 steps per cycle). The service extracts step +1h and +2h, computes the delta from current utilization, and stores `delta_1h`, `delta_2h`, and `trend_strength` per pool.
 
 ### Model Training
 
 ```
-Loaded 30105 rows for 9 pools
-Loaded 207 weather rows
+Loaded 44721 rows for 9 pools
+Loaded 340 weather rows
 Loaded 9072 daily-avg cache entries
-After feature engineering: 29997 rows
-Train: 2666 rows, Val: 667 rows  (80/20 split)
+After feature engineering: 44613 rows
+  Train: 3965 rows, Val: 992 rows  (80/20 split)
+  Training RandomForest for 'Dante-Winter-Warmfreibad' on 3965 samples...
 
- Example feature weight distribution:
-  Bad Giesing-Harlaching — delta MAE: 0.41pp, RMSE: 0.90pp, R²: 0.122
+Example feature distribution:
+  Dante-Winter-Warmfreibad — delta MAE: 0.35pp, RMSE: 0.71pp, R²: 0.435
   Feature importances:
-    util_momentum             0.1392  ██████████████████████████████████████████
-    util_rolling_3h           0.1359  █████████████████████████████████████████
-    avg_weekday_delta         0.0948  ████████████████████████████
-    util_lag_60m              0.0726  ██████████████████████
-    util_lag_120m             0.0695  █████████████████████
-    util_change_30m           0.0630  ███████████████████
-    util_lag_20m              0.0586  ██████████████████
-    util_accel                0.0550  ████████████████
-    day_of_year               0.0502  ███████████████
-    util_lag_30m              0.0470  ██████████████
-    minute                    0.0468  ██████████████
-    util_change_10m           0.0439  █████████████
-    util_lag_10m              0.0436  █████████████
-    hour                      0.0418  █████████████
-    day_of_week               0.0131  ████
-    wind_speed                0.0093  ███
-    temperature               0.0073  ██
-    cloud_cover               0.0068  ██
+    util_momentum             0.2229  ███████████████████████████████████████████████████████████████████
+    avg_weekday_delta         0.1669  ██████████████████████████████████████████████████
+    util_rolling_3h           0.0820  █████████████████████████
+    util_accel                0.0661  ████████████████████
+    hour                      0.0601  ██████████████████
+    util_lag_10m              0.0570  █████████████████
+    util_lag_120m             0.0510  ███████████████
+    util_lag_60m              0.0419  █████████████
+    day_of_year               0.0411  ████████████
+    util_change_30m           0.0411  ████████████
+    util_lag_30m              0.0405  ████████████
+    minute                    0.0274  ████████
+    util_lag_20m              0.0269  ████████
+    cloud_cover               0.0172  █████
+    wind_speed                0.0159  █████
+    temperature               0.0157  █████
+    day_of_week               0.0122  ████
+    util_change_10m           0.0110  ███
+    precipitation             0.0016  █
     is_holiday                0.0009  █
-    is_weekend                0.0007  █
-    precipitation             0.0001  █
+    is_weekend                0.0006  █
     season                    0.0000  █
     days_to_holiday           0.0000  █
 
 === Summary ===
-  Bad Giesing-Harlaching: MAE=0.4%  R²=0.122
-  Cosimawellenbad: MAE=0.6%  R²=0.017
-  Dante-Winter-Warmfreibad: MAE=0.4%  R²=0.106
-  Michaelibad: MAE=0.8%  R²=0.387
-  Müller’sches Volksbad: MAE=0.6%  R²=0.042
-  Nordbad: MAE=0.5%  R²=0.165
-  Olympia-Schwimmhalle: MAE=0.4%  R²=0.007
-  Südbad: MAE=0.6%  R²=0.004
-  Westbad: MAE=0.5%  R²=0.439
+  Bad Giesing-Harlaching: MAE=0.4%  R²=0.181
+  Cosimawellenbad: MAE=0.4%  R²=0.286
+  Dante-Winter-Warmfreibad: MAE=0.3%  R²=0.435
+  Michaelibad: MAE=0.5%  R²=0.430
+  Müller’sches Volksbad: MAE=0.7%  R²=0.232
+  Nordbad: MAE=0.5%  R²=0.346
+  Olympia-Schwimmhalle: MAE=0.3%  R²=0.317
+  Südbad: MAE=0.5%  R²=0.279
+  Westbad: MAE=0.4%  R²=0.436
 ```

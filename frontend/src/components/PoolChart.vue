@@ -393,42 +393,56 @@ function createChart() {
             return !tooltipItem.dataset._weather && !tooltipItem.dataset._ci && !tooltipItem.dataset._prediction
           },
           external: function(context) {
-            const tooltip = context.tooltip
-            
-            if (tooltip.opacity === 0) {
+            // IMPORTANT: do NOT use tooltip.caretX or tooltip.opacity here.
+            // Chart.js mode:'index' does not update the tooltip when no historical
+            // dataset has data at the hovered position (i.e. in the prediction zone).
+            // Without a weather overlay anchoring the tooltip, opacity drops to 0
+            // and caretX freezes — the same problem the crosshair plugin already
+            // works around. Use chart._crosshairX (raw mouse pixel) instead, which
+            // is always current regardless of tooltip state.
+            const mouseX = chart._crosshairX
+
+            // Only reset tiles when the mouse has left the chart entirely.
+            if (mouseX == null) {
               emit('hoverData', null, null)
               return
             }
 
-            // Derive label index from the crosshair pixel position (same as the
-            // crosshair plugin) so tiles stay in sync with the vertical line.
-            const rawIdx = chart.scales?.x?.getValueForPixel(tooltip.caretX)
+            const xScale = chart.scales?.x
+            if (!xScale) return
+            const rawIdx = xScale.getValueForPixel(mouseX)
             if (rawIdx == null || rawIdx < 0) return
+
             const histLen = chart.data.historyLength ?? chart.data.labels.length
             const labelIdx = Math.max(0, Math.min(Math.round(rawIdx), chart.data.labels.length - 1))
-            // For tile values, clamp to last measured point when in prediction zone
-            const valLabelIdx = Math.min(labelIdx, histLen - 1)
-            const targetLabel = chart.data.labels[valLabelIdx]
+            const inPredictionZone = labelIdx >= histLen
+            const targetLabel = chart.data.labels[labelIdx]
 
-            // Look up values by label string — NOT by array index.
-            // Historical datasets use {x: label, y: value} objects; array index
-            // does not equal label index when pools have different data counts.
+            // In the history zone, read from historical datasets.
+            // In the prediction zone, read from _prediction datasets and strip
+            // the " (predicted)" suffix so tile keys match pool names.
             const values = {}
             chart.data.datasets?.forEach(ds => {
-              if (ds._weather || ds._ci || ds._prediction) return
+              if (ds._weather || ds._ci) return
+              if (inPredictionZone) {
+                if (!ds._prediction) return
+              } else {
+                if (ds._prediction) return
+              }
               if (!ds.data) return
               const point = ds.data.find(p =>
                 p != null && typeof p === 'object' && p.x === targetLabel
               )
               if (point != null) {
-                values[ds.label] = point.y
+                const name = ds._prediction ? ds.label.replace(' (predicted)', '') : ds.label
+                values[name] = point.y
               }
             })
 
             const ts = chart.data.timestamps?.[labelIdx] ?? getTimestampForLabel(chart.data.labels[labelIdx])
             const weather = ts ? findNearestWeather(ts) : null
 
-            emit('hoverData', values, { index: valLabelIdx, weather })
+            emit('hoverData', values, { index: labelIdx, weather })
           }
         }
       },

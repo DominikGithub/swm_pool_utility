@@ -1,3 +1,6 @@
+/*
+Weather collector — records current weather observations from Open-Meteo.
+*/
 package main
 
 import (

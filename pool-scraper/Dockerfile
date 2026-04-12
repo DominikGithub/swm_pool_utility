@@ -29,4 +29,4 @@ RUN touch /var/log/scraper.log && \
     echo '' >> /etc/cron.d/scraper && \
     chmod 0644 /etc/cron.d/scraper
 
-CMD cron && tail -f /var/log/scraper.log
+CMD /scraper --once && cron && tail -f /var/log/scraper.log

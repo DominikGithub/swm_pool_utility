@@ -2,7 +2,7 @@
 # Migration 004: Add pred_series column to predictions table
 # Stores the full prediction horizon as a JSON array so the frontend
 # can render every step, not just the +1h and +2h endpoints.
-docker compose run --rm --entrypoint python training -c "
+docker compose run --rm --entrypoint python ml-training -c "
 import sqlite3, os
 conn = sqlite3.connect(os.environ.get('DB_PATH', '/data/swm_pool_utility.db'))
 try:

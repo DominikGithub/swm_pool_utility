@@ -1,13 +1,7 @@
 #!/usr/bin/env python3
 """
-Pool Utilization Prediction — Batch Inference Service
-
-Runs every 10 minutes:
-1. Loads per-pool models from disk
-2. Fetches latest readings from track_pools (lag features)
-3. Fetches weather forecast from weather_forecast table
-4. Builds feature matrix and runs prediction for next 6h per pool
-5. Upserts results to predictions table
+ML Prediction — runs trained models every 10 minutes to forecast near-future pool utilization.
+Gives dashboard users an early signal on whether a pool is about to get busier or quieter.
 
 Usage:
     python predict.py               # run once and exit

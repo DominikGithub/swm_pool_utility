@@ -1,3 +1,6 @@
+/*
+Daily stats aggregator — pre-computes per-pool weekly utilization averages from raw samples.
+*/
 package main
 
 import (

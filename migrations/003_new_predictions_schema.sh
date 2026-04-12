@@ -1,6 +1,6 @@
 #!/bin/bash
 # Migration 003: Replace predictions table with new trend-schema
-docker compose run --rm --entrypoint python training -c "
+docker compose run --rm --entrypoint python ml-training -c "
 import sqlite3, os
 conn = sqlite3.connect(os.environ.get('DB_PATH', '/data/swm_pool_utility.db'))
 conn.execute('DROP TABLE IF EXISTS predictions')

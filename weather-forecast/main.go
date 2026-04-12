@@ -1,3 +1,7 @@
+/*
+Weather forecast collector — fetches the 7-day Open-Meteo forecast.
+Supplies the future weather context the prediction service needs to estimate upcoming pool utilization.
+*/
 package main
 
 import (

@@ -75,6 +75,7 @@ const levelClass = computed(() => {
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+  width: 28px;
 }
 
 .trend-indicator {
@@ -114,7 +115,7 @@ const levelClass = computed(() => {
 }
 
 .strength-bar {
-  width: 48px;
+  width: 100%;
   height: 4px;
   background: #e5e7eb;
   border-radius: 2px;

@@ -4,14 +4,14 @@
 # =============================================================================
 # Background
 # ----------
-# The aggregator previously computed slot_index using SQLite's strftime() on
+# The daily-stats service previously computed slot_index using SQLite's strftime() on
 # raw UTC timestamps.  Because Munich uses CET (UTC+1) in winter and CEST
 # (UTC+2) in summer, every slot was shifted by 1–2 hours in the daily average
 # chart.
 #
-# The fixed aggregator now converts timestamps to Europe/Berlin local time
+# The fixed daily-stats service now converts timestamps to Europe/Berlin local time
 # before bucketing, so slot_index values change.  Old rows in daily_avg_cache
-# must be deleted; the aggregator will rebuild the table correctly on its next
+# must be deleted; the service will rebuild the table correctly on its next
 # run (or you can trigger an immediate rebuild — see below).
 #
 # Raw data (track_pools, weather) is NOT touched: it is already stored in UTC
@@ -81,16 +81,16 @@ docker run --rm \
 if [[ "$REBUILD" == "true" ]]; then
   echo ""
   echo "[2/2] Triggering immediate cache rebuild..."
-  echo "      (requires the daily-avg-aggregator container to be running)"
-  docker compose exec daily-avg-aggregator /app/aggregator --once
+  echo "      (requires the daily-stats container to be running)"
+  docker compose exec daily-stats /app/daily-stats --once
   echo ""
   echo "  Cache rebuilt with corrected Europe/Berlin timezone."
 else
   echo ""
   echo "[2/2] Skipping immediate rebuild."
-  echo "      The aggregator cron job will rebuild the cache within the next hour."
+  echo "      The daily-stats cron job will rebuild the cache within the next hour."
   echo "      To rebuild right now, run:"
-  echo "        docker compose exec daily-avg-aggregator /app/aggregator --once"
+  echo "        docker compose exec daily-stats /app/daily-stats --once"
 fi
 
 echo ""

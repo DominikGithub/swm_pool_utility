@@ -1,3 +1,6 @@
+/*
+REST API — single data gateway between the SQLite database and the frontend dashboard.
+*/
 package main
 
 import (
