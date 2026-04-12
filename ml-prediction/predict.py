@@ -38,8 +38,8 @@ FEATURE_COLS = [
     "hour", "minute", "day_of_week", "day_of_year", "season",
     "is_weekend", "is_holiday", "days_to_holiday",
     "temperature", "wind_speed", "precipitation", "cloud_cover",
-    "util_lag_10m", "util_lag_20m", "util_lag_30m",
-    "util_lag_60m", "util_lag_120m", "util_rolling_3h",
+    "util_lag_10m", "util_lag_20m", "util_lag_30m", "util_lag_60m",
+    "util_rolling_30m", "util_rolling_1h",
     "util_change_10m", "util_change_30m", "util_momentum",
     "util_accel",
     "avg_weekday_delta",
@@ -47,26 +47,6 @@ FEATURE_COLS = [
 
 BERLIN = ZoneInfo("Europe/Berlin")
 SLOTS_PER_WEEK = 1008  # 7 days × 144 ten-minute slots
-
-FEATURE_WEIGHTS = {
-    # "util_lag_120m": 0.3,
-    # "util_lag_60m": 0.5,
-    # "util_rolling_3h": 0.5,
-    # "hour": 2.0,
-    # "wind_speed": 2.0,
-    # "temperature": 1.5,
-    # "cloud_cover": 1.5,
-}
-# NOTE: RandomForest ignores feature weights (tree splits are threshold-based, not
-# weighted sums). These are kept for reference and would apply to linear/boosting models.
-
-
-def apply_feature_weights(X, feature_names):
-    for fname, weight in FEATURE_WEIGHTS.items():
-        if fname in feature_names:
-            idx = feature_names.index(fname)
-            X[:, idx] *= weight
-    return X
 
 # ── Holiday helpers ──────────────────────────────────────────────────────────
 
@@ -212,16 +192,18 @@ def build_features(pool_name, ft, wf, readings, hol_set, avg_cache):
     util_lag_20m = readings[readings["dtime"] <= ft - timedelta(minutes=20)]["utilization"]
     util_lag_30m = readings[readings["dtime"] <= ft - timedelta(minutes=30)]["utilization"]
     util_lag_60m = readings[readings["dtime"] <= ft - timedelta(minutes=60)]["utilization"]
-    util_lag_120m = readings[readings["dtime"] <= ft - timedelta(minutes=120)]["utilization"]
 
     util_t10 = util_lag_10m.iloc[-1] if len(util_lag_10m) > 0 else readings["utilization"].iloc[-1]
     util_t20 = util_lag_20m.iloc[-1] if len(util_lag_20m) > 0 else util_t10
     util_t30 = util_lag_30m.iloc[-1] if len(util_lag_30m) > 0 else util_t20
     util_t60 = util_lag_60m.iloc[-1] if len(util_lag_60m) > 0 else util_t30
-    util_t120 = util_lag_120m.iloc[-1] if len(util_lag_120m) > 0 else util_t60
 
-    recent = readings[readings["dtime"] >= ft - timedelta(hours=3)]["utilization"]
-    util_rolling = recent.mean() if len(recent) > 0 else util_t10
+    # Shorter rolling windows - 30min and 1h instead of 3h
+    recent_30m = readings[readings["dtime"] >= ft - timedelta(minutes=30)]["utilization"]
+    util_rolling_30m = recent_30m.mean() if len(recent_30m) > 0 else util_t10
+
+    recent_1h = readings[readings["dtime"] >= ft - timedelta(hours=1)]["utilization"]
+    util_rolling_1h = recent_1h.mean() if len(recent_1h) > 0 else util_t10
 
     return {
         "hour": ft.hour,
@@ -240,12 +222,12 @@ def build_features(pool_name, ft, wf, readings, hol_set, avg_cache):
         "util_lag_20m": util_t20,
         "util_lag_30m": util_t30,
         "util_lag_60m": util_t60,
-        "util_lag_120m": util_t120,
-        "util_rolling_3h": util_rolling,
+        "util_rolling_30m": util_rolling_30m,
+        "util_rolling_1h": util_rolling_1h,
         "util_change_10m": util_t10 - util_t20,
         "util_change_30m": util_t10 - util_t30,
-        "util_momentum": util_t10 - util_rolling,
-        "util_accel": (util_t10 - util_t20) - (util_t20 - util_t30),  # 2nd derivative: is trend accelerating?
+        "util_momentum": util_t10 - util_rolling_1h,
+        "util_accel": (util_t10 - util_t20) - (util_t20 - util_t30),  # 2nd derivative
         "avg_weekday_delta": _berlin_slot_delta(pool_name, ft, avg_cache),
     }
 

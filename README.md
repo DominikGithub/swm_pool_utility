@@ -318,7 +318,7 @@ A bar at 50% width means the model expects roughly a 10% swing in either directi
 Per-pool **RandomForestRegressor** (one model per pool), trained on:
 - **Temporal features** — hour, day-of-week, day-of-year, season, is-weekend, is-holiday, days-to-holiday
 - **Weather features** — temperature, wind speed, precipitation, cloud cover
-- **Lag features** — utilization at 10/20/30/60/120 minutes ago, 3-hour rolling mean, 30-minute change, momentum
+- **Lag features** — utilization at 10/20/30/60 minutes ago, 30-minute and 1-hour rolling means, change/momentum, acceleration
 - **Seasonality feature** — `avg_weekday_delta`: typical utilization change over the next 30 min at this weekday+time of day, derived from `daily_avg_cache`
 
 Prediction horizon: 2 hours ahead in 10-minute steps (12 steps per cycle). The service extracts step +1h and +2h, computes the delta from current utilization, and stores `delta_1h`, `delta_2h`, and `trend_strength` per pool.
@@ -330,44 +330,43 @@ Loaded 44721 rows for 9 pools
 Loaded 340 weather rows
 Loaded 9072 daily-avg cache entries
 After feature engineering: 44613 rows
-  Train: 3965 rows, Val: 992 rows  (80/20 split)
-  Training RandomForest for 'Dante-Winter-Warmfreibad' on 3965 samples...
+  Train: 3999 rows, Val: 1000 rows  (80/20 split)
+  Training RandomForest for 'Dante-Winter-Warmfreibad' on 3999 samples...
 
 Example feature distribution:
-  Dante-Winter-Warmfreibad — delta MAE: 0.35pp, RMSE: 0.71pp, R²: 0.435
+  Dante-Winter-Warmfreibad — delta MAE: 0.36pp, RMSE: 0.71pp, R²: 0.476
   Feature importances:
-    util_momentum             0.2229  ███████████████████████████████████████████████████████████████████
-    avg_weekday_delta         0.1669  ██████████████████████████████████████████████████
-    util_rolling_3h           0.0820  █████████████████████████
-    util_accel                0.0661  ████████████████████
-    hour                      0.0601  ██████████████████
-    util_lag_10m              0.0570  █████████████████
-    util_lag_120m             0.0510  ███████████████
-    util_lag_60m              0.0419  █████████████
-    day_of_year               0.0411  ████████████
-    util_change_30m           0.0411  ████████████
-    util_lag_30m              0.0405  ████████████
-    minute                    0.0274  ████████
-    util_lag_20m              0.0269  ████████
-    cloud_cover               0.0172  █████
-    wind_speed                0.0159  █████
-    temperature               0.0157  █████
-    day_of_week               0.0122  ████
-    util_change_10m           0.0110  ███
-    precipitation             0.0016  █
+    util_momentum             0.2704  █████████████████████████████████████████████████████████████████████████████████
+    avg_weekday_delta         0.1790  ██████████████████████████████████████████████████████
+    util_change_30m           0.0810  ████████████████████████
+    hour                      0.0748  ██████████████████████
+    util_accel                0.0640  ███████████████████
+    util_rolling_30m          0.0509  ███████████████
+    util_lag_60m              0.0465  ██████████████
+    day_of_year               0.0385  ████████████
+    util_lag_30m              0.0318  ██████████
+    util_rolling_1h           0.0238  ███████
+    temperature               0.0227  ███████
+    util_lag_20m              0.0203  ██████
+    util_lag_10m              0.0177  █████
+    util_change_10m           0.0173  █████
+    wind_speed                0.0162  █████
+    minute                    0.0156  █████
+    cloud_cover               0.0146  ████
+    day_of_week               0.0126  ████
     is_holiday                0.0009  █
+    precipitation             0.0009  █
     is_weekend                0.0006  █
     season                    0.0000  █
     days_to_holiday           0.0000  █
-
 === Summary ===
-  Bad Giesing-Harlaching: MAE=0.4%  R²=0.181
-  Cosimawellenbad: MAE=0.4%  R²=0.286
-  Dante-Winter-Warmfreibad: MAE=0.3%  R²=0.435
-  Michaelibad: MAE=0.5%  R²=0.430
-  Müller’sches Volksbad: MAE=0.7%  R²=0.232
-  Nordbad: MAE=0.5%  R²=0.346
-  Olympia-Schwimmhalle: MAE=0.3%  R²=0.317
-  Südbad: MAE=0.5%  R²=0.279
-  Westbad: MAE=0.4%  R²=0.436
+  Bad Giesing-Harlaching: MAE=0.4%  R²=0.345
+  Cosimawellenbad: MAE=0.4%  R²=0.367
+  Dante-Winter-Warmfreibad: MAE=0.4%  R²=0.476
+  Michaelibad: MAE=0.5%  R²=0.571
+  Müller’sches Volksbad: MAE=0.6%  R²=0.417
+  Nordbad: MAE=0.5%  R²=0.444
+  Olympia-Schwimmhalle: MAE=0.3%  R²=0.422
+  Südbad: MAE=0.5%  R²=0.343
+  Westbad: MAE=0.4%  R²=0.466
 ```

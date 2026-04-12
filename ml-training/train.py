@@ -38,32 +38,12 @@ FEATURE_COLS = [
     "hour", "minute", "day_of_week", "day_of_year", "season",
     "is_weekend", "is_holiday", "days_to_holiday",
     "temperature", "wind_speed", "precipitation", "cloud_cover",
-    "util_lag_10m", "util_lag_20m", "util_lag_30m",
-    "util_lag_60m", "util_lag_120m", "util_rolling_3h",
+    "util_lag_10m", "util_lag_20m", "util_lag_30m", "util_lag_60m",
+    "util_rolling_30m", "util_rolling_1h",
     "util_change_10m", "util_change_30m", "util_momentum",
     "util_accel",
     "avg_weekday_delta",
 ]
-
-FEATURE_WEIGHTS = {
-    # "util_lag_120m": 0.3,
-    # "util_lag_60m": 0.5,
-    # "util_rolling_3h": 0.5,
-    # "hour": 2.0,
-    # "wind_speed": 2.0,
-    # "temperature": 1.5,
-    # "cloud_cover": 1.5,
-}
-# NOTE: RandomForest ignores feature weights (tree splits are threshold-based, not
-# weighted sums). These are kept for reference and would apply to linear/boosting models.
-
-
-def apply_feature_weights(X, feature_names):
-    for fname, weight in FEATURE_WEIGHTS.items():
-        if fname in feature_names:
-            idx = feature_names.index(fname)
-            X[:, idx] *= weight
-    return X
 
 # ── German (Bayern) holidays ─────────────────────────────────────────────────
 
@@ -201,15 +181,19 @@ def add_lag_features(df):
     df["util_lag_20m"] = df.groupby("pool_name")["utilization"].shift(2)
     df["util_lag_30m"] = df.groupby("pool_name")["utilization"].shift(3)
     df["util_lag_60m"] = df.groupby("pool_name")["utilization"].shift(6)
-    df["util_lag_120m"] = df.groupby("pool_name")["utilization"].shift(12)
 
-    df["util_rolling_3h"] = (
+    # Rolling windows - shorter timeframes to focus on recent data
+    df["util_rolling_30m"] = (
         df.groupby("pool_name")["utilization"]
-        .transform(lambda s: s.rolling(18, min_periods=1).mean())
+        .transform(lambda s: s.rolling(3, min_periods=1).mean())
+    )
+    df["util_rolling_1h"] = (
+        df.groupby("pool_name")["utilization"]
+        .transform(lambda s: s.rolling(6, min_periods=1).mean())
     )
     df["util_change_10m"] = df["util_lag_10m"] - df["util_lag_20m"]  # immediate 10-min delta
     df["util_change_30m"] = df["util_lag_10m"] - df["util_lag_30m"]  # 20-min window
-    df["util_momentum"]   = df["util_lag_10m"] - df["util_rolling_3h"]
+    df["util_momentum"]   = df["util_lag_10m"] - df["util_rolling_1h"]
     df["util_accel"]      = df["util_change_10m"] - (df["util_lag_20m"] - df["util_lag_30m"])  # 2nd derivative
     return df
 
@@ -264,12 +248,12 @@ def load_training_data(pool_name=None):
     print(f"After feature engineering: {len(df)} rows")
     return df
 
-def split_train_val(df, val_fraction=0.2):
-    """Chronological 80/20 train/val split.
+def split_train_val(df, val_fraction=0.30):
+    """Chronological 70/30 train/val split.
 
     Splits by iloc position (not by timestamp comparison) so the ratio is
     always exact regardless of duplicate timestamps in the data.  Temporal
-    order is preserved — validation always covers the most recent 20%.
+    order is preserved — validation always covers the most recent 30%.
     """
     df = df.sort_values("dtime").reset_index(drop=True)
     cutoff_idx = int(len(df) * (1 - val_fraction))
