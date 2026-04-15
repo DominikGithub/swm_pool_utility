@@ -35,6 +35,7 @@
         <div class="legend-cell level-2"></div>
         <div class="legend-cell level-3"></div>
         <div class="legend-cell level-4"></div>
+        <div class="legend-cell level-5"></div>
       </div>
       <span class="legend-label">High crowds</span>
       <span class="legend-separator">|</span>
@@ -168,11 +169,12 @@ function getCellClass(poolData, dayIdx, slotIdx) {
   if (cell.closedFraction >= 0.9) return 'closed'
 
   const util = 100 - cell.mean
-  if (util < 20) return 'level-0'
-  if (util < 40) return 'level-1'
-  if (util < 60) return 'level-2'
-  if (util < 80) return 'level-3'
-  return 'level-4'
+  if (util < 12) return 'level-0'
+  if (util < 18) return 'level-1'
+  if (util < 25) return 'level-2'
+  if (util < 35) return 'level-3'
+  if (util < 60) return 'level-4'
+  return 'level-5'
 }
 
 function formatTime(slotIdx) {
@@ -286,11 +288,12 @@ function hideTooltip() {
   min-width: 0;
 }
 
-.heatmap-cell.level-0 { background: #22c55e; }
-.heatmap-cell.level-1 { background: #86efac; }
-.heatmap-cell.level-2 { background: #fde047; }
-.heatmap-cell.level-3 { background: #fb923c; }
-.heatmap-cell.level-4 { background: #ef4444; }
+.heatmap-cell.level-0 { background: #15803d; }
+.heatmap-cell.level-1 { background: #22c55e; }
+.heatmap-cell.level-2 { background: #86efac; }
+.heatmap-cell.level-3 { background: #fde047; }
+.heatmap-cell.level-4 { background: #fb923c; }
+.heatmap-cell.level-5 { background: #ef4444; }
 .heatmap-cell.no-data { background: #e5e7eb; }
 .heatmap-cell.closed { background: #d1d5db; }
 
@@ -331,11 +334,12 @@ function hideTooltip() {
   border-radius: 2px;
 }
 
-.legend-cell.level-0 { background: #22c55e; }
-.legend-cell.level-1 { background: #86efac; }
-.legend-cell.level-2 { background: #fde047; }
-.legend-cell.level-3 { background: #fb923c; }
-.legend-cell.level-4 { background: #ef4444; }
+.legend-cell.level-0 { background: #15803d; }
+.legend-cell.level-1 { background: #22c55e; }
+.legend-cell.level-2 { background: #86efac; }
+.legend-cell.level-3 { background: #fde047; }
+.legend-cell.level-4 { background: #fb923c; }
+.legend-cell.level-5 { background: #ef4444; }
 .legend-cell.closed  { background: #d1d5db; }
 
 .legend-separator {
