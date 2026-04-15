@@ -245,59 +245,66 @@ def predict_pool(pool_name, model, latest_readings, weather_df):
     hol_set = get_german_holidays([now_utc.year, now_utc.year + 1])
     avg_cache = load_avg_cache()
 
-    rows = []
-    for ft in future_times:
-        wf_row = weather_df[weather_df["dtime"] <= ft]
-        if wf_row.empty:
-            continue
-        wf = wf_row.iloc[-1]
-        rows.append(build_features(pool_name, ft, wf, readings, hol_set, avg_cache))
-
-    if len(rows) < PREDICTION_INTERVALS_2H:
-        return None
-
-    pred_df = pd.DataFrame(rows)
-    X = pred_df[FEATURE_COLS].values
-
     current_util = float(readings["utilization"].iloc[-1])
 
-    # Model predicts the change from current (delta), not absolute utilization.
-    # Convert: predicted_absolute = current_util + predicted_delta.
-    delta_preds = model.predict(X)
-    preds = np.clip(current_util + delta_preds, 0, 100)
-
-    # ── Trend-direction blend ────────────────────────────────────────────────
-    # The last 20 minutes of measured utilization overweights the model's
-    # historical-pattern predictions by 2:1 for the first hour of the horizon.
-    # This prevents the model from ignoring a live downtrend (or uptrend) in
-    # favour of the "typical Tuesday morning" average.
+    # ── Autoregressive chaining ───────────────────────────────────────────────
+    # Root cause of the U / inverted-U shape in predictions:
     #
-    # Blend schedule (n_steps = 12 for 2h at 10-min intervals):
-    #   steps 1–6  (first hour)  → 2/3 trend extrapolation + 1/3 model
-    #   steps 7–12 (second hour) → linearly fades back to 0% trend / 100% model
+    # The old approach batch-predicted all N future steps from the same frozen
+    # snapshot of actual readings.  For step t+20m, util_lag_10m was still the
+    # current actual reading (no predicted point existed at t+10m yet).  Only
+    # the temporal features (hour, minute) differed between steps, so the model
+    # had to produce deltas from an inconsistent context — causing oscillation
+    # between positive and negative deltas across the horizon.
     #
-    # trend_velocity = mean 10-min utilization change over the last 20 min.
-    r = readings.sort_values("dtime")
-    if len(r) >= 3:
-        v1 = float(r["utilization"].iloc[-1] - r["utilization"].iloc[-2])
-        v2 = float(r["utilization"].iloc[-2] - r["utilization"].iloc[-3])
-        trend_velocity = (v1 + v2) / 2.0
-    elif len(r) >= 2:
-        trend_velocity = float(r["utilization"].iloc[-1] - r["utilization"].iloc[-2])
-    else:
-        trend_velocity = 0.0
+    # Fix: after each step, append the predicted value to an augmented copy of
+    # the readings.  The next step then sees a lag window that reflects where
+    # the model predicted the pool to be, not a frozen snapshot of the past.
+    #
+    # This is consistent with the training objective (delta = util_t − util_t-10m):
+    # at step k, base_util is the predicted value from step k-1, so
+    # pred_util = base_util + delta is exactly the same relationship.
+    #
+    # No retraining required — the model still predicts Δ(utilisation); only
+    # the lag features it receives are now internally consistent across steps.
+    augmented = readings[["dtime", "utilization"]].copy()
 
-    n_steps = len(preds)
-    half_n = n_steps // 2          # step index where blend starts fading
-    for i in range(n_steps):
-        extrap = float(np.clip(current_util + (i + 1) * trend_velocity, 0, 100))
-        if i < half_n:
-            w_trend = 2.0 / 3.0    # trend 2× model for the first hour
-        else:
-            # Fade from 2/3 → 0 over the second hour
-            fade = (i - half_n) / max(1, n_steps - half_n - 1)
-            w_trend = (2.0 / 3.0) * (1.0 - fade)
-        preds[i] = float(np.clip(w_trend * extrap + (1.0 - w_trend) * float(preds[i]), 0, 100))
+    preds = []
+    for ft in future_times:
+        wf_row = weather_df[weather_df["dtime"] <= ft]
+        # Fall back to the most recent available forecast rather than skipping,
+        # so a momentary forecast gap does not break the chain.
+        if wf_row.empty:
+            wf_row = weather_df
+        wf = wf_row.iloc[-1]
+
+        features = build_features(pool_name, ft, wf, augmented, hol_set, avg_cache)
+        X = np.array([features[c] for c in FEATURE_COLS]).reshape(1, -1)
+
+        # base_util mirrors what build_features used as util_lag_10m for ft,
+        # keeping the delta→absolute conversion consistent with training.
+        recent_for_base = augmented[augmented["dtime"] <= ft - timedelta(minutes=10)]
+        base_util = (
+            float(recent_for_base["utilization"].iloc[-1])
+            if len(recent_for_base) > 0
+            else current_util
+        )
+
+        delta = float(model.predict(X)[0])
+        pred_util = float(np.clip(base_util + delta, 0, 100))
+        preds.append(pred_util)
+
+        # Extend the history window with this prediction so the next step's
+        # lag features (util_lag_10m, util_rolling_30m, util_momentum, …)
+        # reflect the predicted trajectory rather than the frozen past.
+        augmented = pd.concat(
+            [augmented, pd.DataFrame({"dtime": [ft], "utilization": [pred_util]})],
+            ignore_index=True,
+        )
+
+    if len(preds) < PREDICTION_INTERVALS_2H:
+        return None
+
     pred_1h = float(preds[PREDICTION_INTERVALS_1H - 1])
     pred_2h = float(preds[PREDICTION_INTERVALS_2H - 1])
     delta_1h = pred_1h - current_util

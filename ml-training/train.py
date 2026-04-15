@@ -257,12 +257,12 @@ def load_training_data(pool_name=None):
     print(f"After feature engineering: {len(df)} rows")
     return df
 
-def split_train_val(df, val_fraction=0.30):
-    """Chronological 70/30 train/val split.
+def split_train_val(df, val_fraction=0.20):
+    """Chronological 80/20 train/val split.
 
     Splits by iloc position (not by timestamp comparison) so the ratio is
     always exact regardless of duplicate timestamps in the data.  Temporal
-    order is preserved — validation always covers the most recent 30%.
+    order is preserved — validation always covers the most recent 20%.
     """
     df = df.sort_values("dtime").reset_index(drop=True)
     cutoff_idx = int(len(df) * (1 - val_fraction))
@@ -369,8 +369,9 @@ def run_training(pool_name=None, validate_only=False):
             print(f"  Saved: {out_path}")
 
     print("\n=== Summary ===")
+    col = max(len(p) for p in results) if results else 0
     for pool, m in results.items():
-        print(f"  {pool}: MAE={m['mae']:.1f}%  R²={m['r2']:.3f}")
+        print(f"  {pool:<{col}}  MAE={m['mae']:.1f}%   R²={m['r2']:.3f}")
 
     if validate_only:
         print("\n(validate-only mode — no models saved)")

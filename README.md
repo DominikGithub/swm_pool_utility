@@ -53,10 +53,8 @@ The "Daily Statistics" option shows the **recurring weekly utilization pattern**
 
 ### Heatmap
 The heatmap view shows the **weekly utilization pattern** across 30min time slots:
-- **Rows**: Monday to Sunday
-- **Columns**: Time of day (00:00 to 23:00, 30-minute resolution)
 - **Colors**: Green (low crowds) → Yellow → Red (high crowds)
-- **Gray cells**: Pool is closed (based on official SWM opening hours) or insufficient data
+- **Gray cells**: Pool is closed or insufficient data
 
 ### Pool cards
 - One card per pool showing the current (or hovered) utilization percentage
@@ -317,9 +315,9 @@ Each pool tile shows a trend indicator — a circular icon with a directional ar
 
 The arrow indicates whether utilization is expected to **increase**, **decrease**, or remain **stable** in the next hour:
 
-- **Up** — utilization is predicted to rise by more than 5% in the next hour
-- **Down** — utilization is predicted to fall by more than 5% in the next hour
-- **Stable** — change is less than 5% (hidden)
+- **Up** — `delta_1h` exceeds +2 pp (`DIRECTION_THRESHOLD = 2.0` in `ml-prediction/predict.py`)
+- **Down** — `delta_1h` is below −2 pp
+- **Stable** — change is within ±2 pp (arrow hidden)
 
 ### Trend Strength
 
@@ -390,13 +388,13 @@ Example feature distribution:
     season                    0.0000  █
     days_to_holiday           0.0000  █
 === Summary ===
-  Bad Giesing-Harlaching: MAE=0.4%  R²=0.345
-  Cosimawellenbad: MAE=0.4%  R²=0.367
+  Bad Giesing-Harlaching:   MAE=0.4%  R²=0.345
+  Cosimawellenbad:          MAE=0.4%  R²=0.367
   Dante-Winter-Warmfreibad: MAE=0.4%  R²=0.476
-  Michaelibad: MAE=0.5%  R²=0.571
-  Müller’sches Volksbad: MAE=0.6%  R²=0.417
-  Nordbad: MAE=0.5%  R²=0.444
-  Olympia-Schwimmhalle: MAE=0.3%  R²=0.422
-  Südbad: MAE=0.5%  R²=0.343
-  Westbad: MAE=0.4%  R²=0.466
+  Michaelibad:              MAE=0.5%  R²=0.571
+  Müller’sches Volksbad:    MAE=0.6%  R²=0.417
+  Nordbad:                  MAE=0.5%  R²=0.444
+  Olympia-Schwimmhalle:     MAE=0.3%  R²=0.422
+  Südbad:                   MAE=0.5%  R²=0.343
+  Westbad:                  MAE=0.4%  R²=0.466
 ```
