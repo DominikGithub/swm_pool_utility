@@ -26,11 +26,18 @@
     <div v-if="loading" class="loading">Loading...</div>
     <template v-else>
       <div v-if="isHeatmapView" class="chart-container">
-        <HeatmapCard :data="hourlyData" />
+        <HeatmapCard
+          :data="hourlyData"
+          :knownPools="selectedPool ? [] : pools"
+        />
       </div>
       <template v-else>
         <div class="chart-container" @mouseleave="onHoverData(null, null)">
           <PoolChart :data="chartData" :weatherData="chartWeatherData" @hoverData="onHoverData" />
+          <div v-if="!isWeekdayView && !(historyData ?? []).length" class="no-data-overlay">
+            No data available for the selected pool and time range.
+            <br>Try a longer time range or select a different pool.
+          </div>
         </div>
         
         <div class="pool-list">
@@ -140,17 +147,20 @@ function getPoolWithValue(pool) {
 }
 
 const currentPools = computed(() => {
-  if (!historyData.value.length && !dailyAvgData.value.datasets.length) return []
-  
+  const history = historyData.value ?? []
+  const avgDatasets = dailyAvgData.value?.datasets ?? []
+
+  if (!history.length && !avgDatasets.length) return []
+
   if (isWeekdayView.value) {
-    return dailyAvgData.value.datasets.map(ds => ({
+    return avgDatasets.map(ds => ({
       name: ds.label,
       utility: null
     }))
   }
 
   const poolMap = new Map()
-  const reversed = [...historyData.value].reverse()
+  const reversed = [...history].reverse()
   reversed.forEach(item => {
     if (!poolMap.has(item.name)) {
       const utilization = Math.max(0, 100 - item.utility)
@@ -237,10 +247,11 @@ const chartData = computed(() => {
     return { labels: apiData.labels, datasets, historyLength: apiData.labels.length }
   }
 
-  if (!historyData.value.length) return { labels: [], datasets: [], timestamps: [] }
+  const history = historyData.value ?? []
+  if (!history.length) return { labels: [], datasets: [], timestamps: [] }
 
   const days = selectedDays.value
-  let filtered = historyData.value
+  let filtered = history
   
   if (days > 0) {
     const cutoff = new Date()
@@ -395,9 +406,9 @@ async function fetchData() {
         fetchPoolStatus()
       ])
       
-      historyData.value = history
-      weatherData.value = weather
-      poolStatuses.value = Object.fromEntries(statuses.map(s => [s.name, s]))
+      historyData.value = history ?? []
+      weatherData.value = weather ?? []
+      poolStatuses.value = Object.fromEntries((statuses ?? []).map(s => [s.name, s]))
     }
   } catch (err) {
     console.error('Failed to fetch data:', err)
@@ -446,3 +457,23 @@ onMounted(async () => {
   }
 })
 </script>
+
+<style scoped>
+.chart-container {
+  position: relative;
+}
+
+.no-data-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #6b7280;
+  font-size: 0.9rem;
+  text-align: center;
+  pointer-events: none;
+  line-height: 1.6;
+}
+</style>

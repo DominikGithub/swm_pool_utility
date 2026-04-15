@@ -129,9 +129,10 @@ SLOTS_PER_WEEK = 1008  # 7 days × 144 ten-minute slots
 def load_avg_cache():
     """Load daily_avg_cache into a dict keyed by (pool_name, slot_index)."""
     conn = sqlite3.connect(DB_PATH)
-    rows = conn.execute(
-        "SELECT pool_name, slot_index, mean_utilization FROM daily_avg_cache"
-    ).fetchall()
+    rows = conn.execute("""
+        SELECT p.name, dac.slot_index, dac.mean_utilization
+        FROM daily_avg_cache dac JOIN pools p ON dac.pool_id = p.id
+    """).fetchall()
     conn.close()
     return {(pool, slot): mean for pool, slot, mean in rows}
 
@@ -203,15 +204,23 @@ def add_lag_features(df):
 def load_training_data(pool_name=None):
     conn = sqlite3.connect(DB_PATH)
 
-    query = """
-        SELECT name, dtime, utility FROM track_pools
-        WHERE name IS NOT NULL
-        ORDER BY name, dtime
-    """
+    # Note: the pool filter uses a parameterised query to avoid SQL injection.
+    # Previously the AND clause was appended after ORDER BY (invalid SQL) — fixed here.
     if pool_name:
-        query += f" AND name = '{pool_name}'"
-
-    df = pd.read_sql_query(query, conn, parse_dates=["dtime"])
+        query = """
+            SELECT p.name, tp.dtime, tp.utility
+            FROM track_pools tp JOIN pools p ON tp.pool_id = p.id
+            WHERE p.name = ?
+            ORDER BY tp.dtime
+        """
+        df = pd.read_sql_query(query, conn, params=[pool_name], parse_dates=["dtime"])
+    else:
+        query = """
+            SELECT p.name, tp.dtime, tp.utility
+            FROM track_pools tp JOIN pools p ON tp.pool_id = p.id
+            ORDER BY p.name, tp.dtime
+        """
+        df = pd.read_sql_query(query, conn, parse_dates=["dtime"])
     conn.close()
 
     if df.empty:

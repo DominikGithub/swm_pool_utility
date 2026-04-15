@@ -75,9 +75,10 @@ def days_to_nearest_holiday(dt, holiday_set, window=7):
 def load_avg_cache():
     """Load daily_avg_cache into a dict keyed by (pool_name, slot_index)."""
     conn = sqlite3.connect(DB_PATH)
-    rows = conn.execute(
-        "SELECT pool_name, slot_index, mean_utilization FROM daily_avg_cache"
-    ).fetchall()
+    rows = conn.execute("""
+        SELECT p.name, dac.slot_index, dac.mean_utilization
+        FROM daily_avg_cache dac JOIN pools p ON dac.pool_id = p.id
+    """).fetchall()
     conn.close()
     return {(pool, slot): mean for pool, slot, mean in rows}
 
@@ -119,7 +120,7 @@ def load_models():
 
     # Map normalized names to DB pool names
     conn = sqlite3.connect(DB_PATH)
-    db_pools = [r[0] for r in conn.execute("SELECT DISTINCT name FROM track_pools").fetchall()]
+    db_pools = [r[0] for r in conn.execute("SELECT name FROM pools").fetchall()]
     conn.close()
 
     def norm_key(s):
@@ -145,9 +146,9 @@ def load_models():
 def load_latest_readings():
     conn = sqlite3.connect(DB_PATH)
     df = pd.read_sql_query("""
-        SELECT name, dtime, utility FROM track_pools
-        WHERE name IS NOT NULL
-        ORDER BY name, dtime DESC
+        SELECT p.name, tp.dtime, tp.utility
+        FROM track_pools tp JOIN pools p ON tp.pool_id = p.id
+        ORDER BY p.name, tp.dtime DESC
     """, conn, parse_dates=["dtime"])
     conn.close()
 

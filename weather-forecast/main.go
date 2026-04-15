@@ -19,12 +19,16 @@ import (
 
 var db *sql.DB
 
+// weatherTypeIDs caches the weather_types.id for each weather type string so
+// every insert only needs a map lookup rather than a DB round-trip.
+var weatherTypeIDs = map[string]int64{}
+
 const (
-	munichLat        = 48.1372
-	munichLon        = 11.5755
-	openMeteoURL     = "https://api.open-meteo.com/v1/forecast"
-	forecastDays     = 7
-	intervalMinutes  = 10
+	munichLat       = 48.1372
+	munichLon       = 11.5755
+	openMeteoURL    = "https://api.open-meteo.com/v1/forecast"
+	forecastDays    = 7
+	intervalMinutes = 10
 )
 
 type OpenMeteoHourlyResponse struct {
@@ -45,7 +49,7 @@ type ForecastPoint struct {
 	Precipitation float64
 	CloudCover    int
 	WeatherCode   int
-	WeatherType   string
+	WeatherTypeID int64
 }
 
 func initDB() {
@@ -59,6 +63,48 @@ func initDB() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	loadWeatherTypeIDs()
+}
+
+// loadWeatherTypeIDs reads all existing weather types into the in-memory cache.
+func loadWeatherTypeIDs() {
+	rows, err := db.Query("SELECT id, type FROM weather_types")
+	if err != nil {
+		log.Printf("warning: could not load weather type IDs: %v", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var wtype string
+		if err := rows.Scan(&id, &wtype); err != nil {
+			continue
+		}
+		weatherTypeIDs[wtype] = id
+	}
+}
+
+// getWeatherTypeID returns the weather_types.id for wtype. Falls back to the
+// 'unknown' row if the type string is not in the cache, then tries a live DB
+// lookup to handle any future additions.
+func getWeatherTypeID(wtype string) (int64, error) {
+	if id, ok := weatherTypeIDs[wtype]; ok {
+		return id, nil
+	}
+	// Not cached — try a live lookup (handles unexpected codes returned by the API).
+	var id int64
+	err := db.QueryRow("SELECT id FROM weather_types WHERE type = ?", wtype).Scan(&id)
+	if err == nil {
+		weatherTypeIDs[wtype] = id
+		return id, nil
+	}
+	// Last resort: fall back to 'unknown'.
+	if id, ok := weatherTypeIDs["unknown"]; ok {
+		log.Printf("warning: weather type %q not found, using 'unknown'", wtype)
+		return id, nil
+	}
+	return 0, fmt.Errorf("weather type %q not found and no 'unknown' fallback available", wtype)
 }
 
 func getWeatherType(code int) string {
@@ -169,6 +215,12 @@ func fetchAndSaveForecast() error {
 			continue
 		}
 
+		weatherTypeID, err := getWeatherTypeID(getWeatherType(h.WeatherCode[i]))
+		if err != nil {
+			log.Printf("warning: skipping forecast hour at %s: %v", h.Time[i], err)
+			continue
+		}
+
 		steps := 60 / intervalMinutes
 		for step := 0; step < steps; step++ {
 			t := float64(step) / float64(steps)
@@ -181,7 +233,7 @@ func fetchAndSaveForecast() error {
 				Precipitation: interpolateLinear(h.Precipitation[i], h.Precipitation[i+1], t),
 				CloudCover:    interpolateInt(h.CloudCover[i], h.CloudCover[i+1], t),
 				WeatherCode:   h.WeatherCode[i],
-				WeatherType:   getWeatherType(h.WeatherCode[i]),
+				WeatherTypeID: weatherTypeID,
 			}
 			points = append(points, point)
 		}
@@ -201,7 +253,7 @@ func fetchAndSaveForecast() error {
 
 	stmt, err := tx.Prepare(`
 		INSERT OR REPLACE INTO weather_forecast
-		(dtime, temperature, wind_speed, precipitation, cloud_cover, weather_code, weather_type, fetched_at)
+		(dtime, temperature, wind_speed, precipitation, cloud_cover, weather_code, weather_type_id, fetched_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
@@ -211,7 +263,7 @@ func fetchAndSaveForecast() error {
 	count := 0
 	for _, p := range points {
 		_, err := stmt.Exec(p.Dtime, p.Temperature, p.WindSpeed, p.Precipitation,
-			p.CloudCover, p.WeatherCode, p.WeatherType, fetchedAt)
+			p.CloudCover, p.WeatherCode, p.WeatherTypeID, fetchedAt)
 		if err != nil {
 			log.Printf("failed to insert forecast for %s: %v", p.Dtime, err)
 			continue

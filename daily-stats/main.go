@@ -46,9 +46,28 @@ func aggregate() error {
 		return fmt.Errorf("failed to load Europe/Berlin timezone: %w", err)
 	}
 
+	// Load pool IDs so the upsert can use integer foreign keys.
+	poolIDs := map[string]int64{}
+	pidRows, err := db.Query("SELECT id, name FROM pools")
+	if err != nil {
+		return fmt.Errorf("failed to load pool IDs: %w", err)
+	}
+	for pidRows.Next() {
+		var id int64
+		var name string
+		if err := pidRows.Scan(&id, &name); err != nil {
+			continue
+		}
+		poolIDs[name] = id
+	}
+	pidRows.Close()
+
 	// Read all raw data. Slot computation is done in Go (not SQL) so we can
 	// apply DST-aware timezone conversion before bucketing.
-	rows, err := db.Query(`SELECT name, dtime, utility FROM track_pools`)
+	rows, err := db.Query(`
+		SELECT p.name, tp.dtime, tp.utility
+		FROM track_pools tp JOIN pools p ON tp.pool_id = p.id
+	`)
 	if err != nil {
 		return fmt.Errorf("query failed: %w", err)
 	}
@@ -99,9 +118,9 @@ func aggregate() error {
 	defer tx.Rollback()
 
 	stmt, err := tx.Prepare(`
-		INSERT INTO daily_avg_cache (pool_name, slot_index, mean_utilization, std_dev, sample_count, updated_at)
+		INSERT INTO daily_avg_cache (pool_id, slot_index, mean_utilization, std_dev, sample_count, updated_at)
 		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(pool_name, slot_index) DO UPDATE SET
+		ON CONFLICT(pool_id, slot_index) DO UPDATE SET
 			mean_utilization = excluded.mean_utilization,
 			std_dev          = excluded.std_dev,
 			sample_count     = excluded.sample_count,
@@ -115,6 +134,11 @@ func aggregate() error {
 	totalSlots := 0
 	pools := map[string]bool{}
 	for poolName, slots := range data {
+		poolID, ok := poolIDs[poolName]
+		if !ok {
+			log.Printf("warning: pool %q not found in pools table, skipping", poolName)
+			continue
+		}
 		for slot, acc := range slots {
 			mean := acc.sum / float64(acc.count)
 			// Population stddev: sqrt(E[X²] - E[X]²)
@@ -124,7 +148,7 @@ func aggregate() error {
 			}
 			stddev := math.Sqrt(variance)
 
-			if _, err := stmt.Exec(poolName, slot, mean, stddev, acc.count); err != nil {
+			if _, err := stmt.Exec(poolID, slot, mean, stddev, acc.count); err != nil {
 				log.Printf("upsert failed for %s slot %d: %v", poolName, slot, err)
 				continue
 			}

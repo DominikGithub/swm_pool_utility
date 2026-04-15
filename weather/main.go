@@ -17,21 +17,25 @@ import (
 
 var db *sql.DB
 
+// weatherTypeIDs caches the weather_types.id for each weather type string so
+// every insert only needs a map lookup rather than a DB round-trip.
+var weatherTypeIDs = map[string]int64{}
+
 const (
-	munichLat  = 48.1372
-	munichLon  = 11.5755
+	munichLat    = 48.1372
+	munichLon    = 11.5755
 	openMeteoURL = "https://api.open-meteo.com/v1/forecast"
 )
 
 type OpenMeteoResponse struct {
 	Current struct {
-		Time           string  `json:"time"`
-		Temperature    float64 `json:"temperature_2m"`
-		WindSpeed      float64 `json:"wind_speed_10m"`
-		WindDirection  float64 `json:"wind_direction_10m"`
-		Precipitation  float64 `json:"precipitation"`
-		CloudCover     int     `json:"cloud_cover"`
-		WeatherCode    int     `json:"weather_code"`
+		Time          string  `json:"time"`
+		Temperature   float64 `json:"temperature_2m"`
+		WindSpeed     float64 `json:"wind_speed_10m"`
+		WindDirection float64 `json:"wind_direction_10m"`
+		Precipitation float64 `json:"precipitation"`
+		CloudCover    int     `json:"cloud_cover"`
+		WeatherCode   int     `json:"weather_code"`
 	} `json:"current"`
 }
 
@@ -56,6 +60,48 @@ func initDB() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	loadWeatherTypeIDs()
+}
+
+// loadWeatherTypeIDs reads all existing weather types into the in-memory cache.
+func loadWeatherTypeIDs() {
+	rows, err := db.Query("SELECT id, type FROM weather_types")
+	if err != nil {
+		log.Printf("warning: could not load weather type IDs: %v", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var wtype string
+		if err := rows.Scan(&id, &wtype); err != nil {
+			continue
+		}
+		weatherTypeIDs[wtype] = id
+	}
+}
+
+// getWeatherTypeID returns the weather_types.id for wtype.  Falls back to the
+// 'unknown' row if the type string is not in the cache, then tries a live DB
+// lookup to handle any future additions.
+func getWeatherTypeID(wtype string) (int64, error) {
+	if id, ok := weatherTypeIDs[wtype]; ok {
+		return id, nil
+	}
+	// Not cached — try a live lookup (handles unexpected codes returned by the API).
+	var id int64
+	err := db.QueryRow("SELECT id FROM weather_types WHERE type = ?", wtype).Scan(&id)
+	if err == nil {
+		weatherTypeIDs[wtype] = id
+		return id, nil
+	}
+	// Last resort: fall back to 'unknown'.
+	if id, ok := weatherTypeIDs["unknown"]; ok {
+		log.Printf("warning: weather type %q not found, using 'unknown'", wtype)
+		return id, nil
+	}
+	return 0, fmt.Errorf("weather type %q not found and no 'unknown' fallback available", wtype)
 }
 
 func fetchWeather() (*WeatherData, error) {
@@ -114,14 +160,19 @@ func getWeatherType(code int) string {
 }
 
 func saveWeather(w *WeatherData) error {
+	weatherTypeID, err := getWeatherTypeID(w.WeatherType)
+	if err != nil {
+		return fmt.Errorf("weather type ID lookup failed: %w", err)
+	}
+
 	// Explicitly store the current UTC timestamp. All timestamps in the database
 	// are UTC ("YYYY-MM-DD HH:MM:SS"). Timezone conversion (e.g. to Europe/Berlin)
 	// happens at read time in the API.
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
-	_, err := db.Exec(`
-		INSERT INTO weather (dtime, temperature, wind_speed, wind_direction, precipitation, cloud_cover, weather_code, weather_type)
+	_, err = db.Exec(`
+		INSERT INTO weather (dtime, temperature, wind_speed, wind_direction, precipitation, cloud_cover, weather_code, weather_type_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		now, w.Temperature, w.WindSpeed, w.WindDirection, w.Precipitation, w.CloudCover, w.WeatherCode, w.WeatherType)
+		now, w.Temperature, w.WindSpeed, w.WindDirection, w.Precipitation, w.CloudCover, w.WeatherCode, weatherTypeID)
 	return err
 }
 

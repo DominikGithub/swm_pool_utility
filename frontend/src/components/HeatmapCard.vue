@@ -51,7 +51,8 @@
 import { computed, ref } from 'vue'
 
 const props = defineProps({
-  data: { type: Array, default: () => [] }
+  data: { type: Array, default: () => [] },
+  knownPools: { type: Array, default: () => [] }
 })
 
 const tooltip = ref({ visible: false, x: 0, y: 0, text: '' })
@@ -131,10 +132,16 @@ function isScheduleClosed(poolName, dayIdx, slotIdx) {
 // ---------------------------------------------------------------------------
 
 const poolDataList = computed(() => {
-  if (!props.data || props.data.length === 0) return []
-
   const byPool = {}
-  for (const row of props.data) {
+
+  // Seed empty grids for every pool known to the database so that pools with
+  // no recent activity still appear in the heatmap instead of silently disappearing.
+  for (const poolName of props.knownPools) {
+    byPool[poolName] = Array(7).fill(null).map(() => Array(48).fill(null))
+  }
+
+  // Overlay actual heatmap data on top of the empty grids.
+  for (const row of (props.data ?? [])) {
     if (!byPool[row.pool]) {
       byPool[row.pool] = Array(7).fill(null).map(() => Array(48).fill(null))
     }
@@ -142,6 +149,8 @@ const poolDataList = computed(() => {
     const s = row.slot
     byPool[row.pool][d][s] = { mean: row.mean, samples: row.samples, closedFraction: row.closed_fraction }
   }
+
+  if (Object.keys(byPool).length === 0) return []
 
   return Object.entries(byPool)
     .sort(([a], [b]) => a.localeCompare(b))

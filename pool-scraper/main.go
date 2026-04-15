@@ -19,6 +19,11 @@ import (
 
 var db *sql.DB
 
+// poolIDs caches the pools.id for each pool name so every insert only needs
+// a map lookup rather than a DB round-trip.  Populated at startup and updated
+// on the rare occasion a previously-unseen pool name appears.
+var poolIDs = map[string]int64{}
+
 func initDB() {
 	dbPath := os.Getenv("DB_PATH")
 	if dbPath == "" {
@@ -30,6 +35,46 @@ func initDB() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	loadPoolIDs()
+}
+
+// loadPoolIDs reads all existing pools into the in-memory cache.
+func loadPoolIDs() {
+	rows, err := db.Query("SELECT id, name FROM pools")
+	if err != nil {
+		// Table may not exist yet on a brand-new DB — not fatal.
+		log.Printf("warning: could not load pool IDs: %v", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			continue
+		}
+		poolIDs[name] = id
+	}
+}
+
+// getOrCreatePoolID returns the pools.id for name, inserting a new row if this
+// is the first time the pool has been seen.
+func getOrCreatePoolID(name string) (int64, error) {
+	if id, ok := poolIDs[name]; ok {
+		return id, nil
+	}
+	// INSERT OR IGNORE is safe to call concurrently (single goroutine here, but
+	// harmless even if called twice due to restart races).
+	if _, err := db.Exec("INSERT OR IGNORE INTO pools(name) VALUES (?)", name); err != nil {
+		return 0, fmt.Errorf("insert pool %q: %w", name, err)
+	}
+	var id int64
+	if err := db.QueryRow("SELECT id FROM pools WHERE name = ?", name).Scan(&id); err != nil {
+		return 0, fmt.Errorf("lookup pool %q: %w", name, err)
+	}
+	poolIDs[name] = id
+	return id, nil
 }
 
 func scrape() error {
@@ -76,7 +121,15 @@ func scrape() error {
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 
 	for name, utility := range poolStats {
-		_, err := db.Exec("INSERT INTO track_pools (name, dtime, utility) VALUES (?, ?, ?)", name, now, utility)
+		poolID, err := getOrCreatePoolID(name)
+		if err != nil {
+			log.Printf("failed to resolve pool ID for %s: %v", name, err)
+			continue
+		}
+		_, err = db.Exec(
+			"INSERT INTO track_pools (pool_id, dtime, utility) VALUES (?, ?, ?)",
+			poolID, now, utility,
+		)
 		if err != nil {
 			log.Printf("failed to insert %s: %v", name, err)
 		} else {
@@ -146,14 +199,15 @@ func extractPoolData(html string) map[string]int {
 // structural — no pool/sauna name matching needed.
 //
 // Page structure (as of 2026-04):
-//   <div ... id="bad">
-//     <h2 ...>Echtzeit-Auslastung der Bäder</h2>
-//     ... pool <h3> entries ...
-//   </div>
-//   <div ... id="sauna">
-//     <h2 ...>Echtzeit-Auslastung der Saunen</h2>
-//     ... sauna <h3> entries ...
-//   </div>
+//
+//	<div ... id="bad">
+//	  <h2 ...>Echtzeit-Auslastung der Bäder</h2>
+//	  ... pool <h3> entries ...
+//	</div>
+//	<div ... id="sauna">
+//	  <h2 ...>Echtzeit-Auslastung der Saunen</h2>
+//	  ... sauna <h3> entries ...
+//	</div>
 func extractPoolsSection(html string) string {
 	// Find the pools container: <div ... id="bad">
 	reBadStart := regexp.MustCompile(`<div[^>]*\bid="bad"[^>]*>`)

@@ -37,14 +37,14 @@ type WeatherPoint struct {
 }
 
 func getPools(c *gin.Context) {
-	rows, err := db.Query("SELECT DISTINCT name FROM track_pools ORDER BY name")
+	rows, err := db.Query("SELECT name FROM pools ORDER BY name")
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
 	defer rows.Close()
 
-	var pools []string
+	pools := make([]string, 0)
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
@@ -60,27 +60,28 @@ func getHistory(c *gin.Context) {
 	daysStr := c.DefaultQuery("days", "1")
 	days, _ := strconv.Atoi(daysStr)
 
-	query := "SELECT name, dtime, utility FROM track_pools"
+	query := `SELECT p.name, tp.dtime, tp.utility
+		FROM track_pools tp JOIN pools p ON tp.pool_id = p.id`
 	var args []interface{}
 
 	if days > 0 {
 		// Format cutoff as the same "YYYY-MM-DD HH:MM:SS" UTC string that SQLite
 		// stores, so the string comparison is unambiguous.
 		cutoff := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02 15:04:05")
-		query += " WHERE dtime >= ?"
+		query += " WHERE tp.dtime >= ?"
 		args = append(args, cutoff)
 		if pool != "" {
-			query += " AND name = ?"
+			query += " AND p.name = ?"
 			args = append(args, pool)
 		}
 	} else {
 		if pool != "" {
-			query += " WHERE name = ?"
+			query += " WHERE p.name = ?"
 			args = append(args, pool)
 		}
 	}
 
-	query += " ORDER BY dtime ASC"
+	query += " ORDER BY tp.dtime ASC"
 
 	rows, err := db.Query(query, args...)
 	if err != nil {
@@ -89,7 +90,7 @@ func getHistory(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	var data []DataPoint
+	data := make([]DataPoint, 0)
 	for rows.Next() {
 		var d DataPoint
 		var dtime time.Time // go-sqlite3 parses DATETIME columns into time.Time (UTC)
@@ -108,16 +109,17 @@ func getWeather(c *gin.Context) {
 	daysStr := c.DefaultQuery("days", "1")
 	days, _ := strconv.Atoi(daysStr)
 
-	query := "SELECT dtime, temperature, wind_speed, cloud_cover, weather_type, precipitation FROM weather"
+	query := `SELECT w.dtime, w.temperature, w.wind_speed, w.cloud_cover, wt.type, w.precipitation
+		FROM weather w JOIN weather_types wt ON w.weather_type_id = wt.id`
 	var args []interface{}
 
 	if days > 0 {
 		cutoff := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02 15:04:05")
-		query += " WHERE dtime >= ?"
+		query += " WHERE w.dtime >= ?"
 		args = append(args, cutoff)
 	}
 
-	query += " ORDER BY dtime ASC"
+	query += " ORDER BY w.dtime ASC"
 
 	rows, err := db.Query(query, args...)
 	if err != nil {
@@ -126,7 +128,7 @@ func getWeather(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	var data []WeatherPoint
+	data := make([]WeatherPoint, 0)
 	for rows.Next() {
 		var d WeatherPoint
 		var dtime time.Time
@@ -146,13 +148,14 @@ func health(c *gin.Context) {
 func getDailyAvg(c *gin.Context) {
 	pool := c.Query("pool")
 
-	query := `SELECT pool_name, slot_index, mean_utilization, std_dev, sample_count, updated_at FROM daily_avg_cache`
+	query := `SELECT p.name, dac.slot_index, dac.mean_utilization, dac.std_dev, dac.sample_count, dac.updated_at
+		FROM daily_avg_cache dac JOIN pools p ON dac.pool_id = p.id`
 	var args []interface{}
 	if pool != "" {
-		query += ` WHERE pool_name = ?`
+		query += ` WHERE p.name = ?`
 		args = append(args, pool)
 	}
-	query += ` ORDER BY pool_name, slot_index`
+	query += ` ORDER BY p.name, dac.slot_index`
 
 	rows, err := db.Query(query, args...)
 	if err != nil {
@@ -274,22 +277,22 @@ func getHourlyAvg(c *gin.Context) {
 
 	query := `
 		SELECT
-			name as pool_name,
-			strftime('%w', datetime(dtime, '+2 hours')) as dow,
-			strftime('%H', datetime(dtime, '+2 hours')) * 2 + 
-				CASE WHEN CAST(strftime('%M', datetime(dtime, '+2 hours')) AS INTEGER) >= 30 THEN 1 ELSE 0 END as slot,
-			AVG(utility) as mean_util,
+			p.name as pool_name,
+			strftime('%w', datetime(tp.dtime, '+2 hours')) as dow,
+			strftime('%H', datetime(tp.dtime, '+2 hours')) * 2 +
+				CASE WHEN CAST(strftime('%M', datetime(tp.dtime, '+2 hours')) AS INTEGER) >= 30 THEN 1 ELSE 0 END as slot,
+			AVG(tp.utility) as mean_util,
 			COUNT(*) as sample_count,
-			SUM(CASE WHEN utility >= 99 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) as closed_fraction
-		FROM track_pools
-		WHERE dtime >= datetime('now', '-60 days')
+			SUM(CASE WHEN tp.utility >= 99 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) as closed_fraction
+		FROM track_pools tp JOIN pools p ON tp.pool_id = p.id
+		WHERE tp.dtime >= datetime('now', '-60 days')
 	`
 	var args []interface{}
 	if pool != "" {
-		query += " AND name = ?"
+		query += " AND p.name = ?"
 		args = append(args, pool)
 	}
-	query += " GROUP BY name, dow, slot ORDER BY name, dow, slot"
+	query += " GROUP BY p.name, dow, slot ORDER BY p.name, dow, slot"
 
 	rows, err := db.Query(query, args...)
 	if err != nil {
@@ -307,7 +310,7 @@ func getHourlyAvg(c *gin.Context) {
 		ClosedFraction float64 `json:"closed_fraction"`
 	}
 
-	var data []hourlyData
+	data := make([]hourlyData, 0)
 	for rows.Next() {
 		var hd hourlyData
 		if err := rows.Scan(&hd.Pool, &hd.DayOfWeek, &hd.Slot, &hd.Mean, &hd.Samples, &hd.ClosedFraction); err != nil {
@@ -348,7 +351,7 @@ func getPredictions(c *gin.Context) {
 		Direction     string  `json:"direction"`
 	}
 
-	var trends []TrendPoint
+	trends := make([]TrendPoint, 0)
 	for rows.Next() {
 		var tp TrendPoint
 		if err := rows.Scan(&tp.Pool, &tp.Current, &tp.Pred1H, &tp.Pred2H, &tp.Delta1H, &tp.Delta2H, &tp.TrendStrength, &tp.Direction); err != nil {
@@ -373,9 +376,10 @@ type PoolStatus struct {
 
 func getPoolStatus(c *gin.Context) {
 	rows, err := db.Query(`
-		SELECT name, utility FROM track_pools
-		WHERE (name, dtime) IN (
-			SELECT name, MAX(dtime) FROM track_pools GROUP BY name
+		SELECT p.name, tp.utility
+		FROM track_pools tp JOIN pools p ON tp.pool_id = p.id
+		WHERE (tp.pool_id, tp.dtime) IN (
+			SELECT pool_id, MAX(dtime) FROM track_pools GROUP BY pool_id
 		)
 	`)
 	if err != nil {
@@ -419,7 +423,7 @@ func getPoolStatus(c *gin.Context) {
 		preds[ps.Name] = ps
 	}
 
-	var statuses []PoolStatus
+	statuses := make([]PoolStatus, 0)
 	for name, cur := range current {
 		if pred, ok := preds[name]; ok {
 			statuses = append(statuses, pred)
