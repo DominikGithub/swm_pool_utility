@@ -1,0 +1,47 @@
+[
+  {
+    "_comment": "Bad Giesing-Harlaching — Sa-Mo: 8-18, Di-Fr: 8-21",
+    "match": ["giesing"],
+    "days": [[16,36],[16,42],[16,42],[16,42],[16,42],[16,36],[16,36]]
+  },
+  {
+    "_comment": "Cosimawellenbad — Mo-So: 7:30-23",
+    "match": ["cosima"],
+    "days": [[15,46],[15,46],[15,46],[15,46],[15,46],[15,46],[15,46]]
+  },
+  {
+    "_comment": "Dantebad — Mo,Mi,Fr: 7-23; Di,Do,Sa,So: 7:30-23",
+    "match": ["dante"],
+    "days": [[14,46],[15,46],[14,46],[15,46],[14,46],[15,46],[15,46]]
+  },
+  {
+    "_comment": "Michaelibad — Mo-So: 7:30-23",
+    "match": ["michaeli"],
+    "days": [[15,46],[15,46],[15,46],[15,46],[15,46],[15,46],[15,46]]
+  },
+  {
+    "_comment": "Müller'sches Volksbad — Mo-So: 7:30-23",
+    "match": ["volksbad", "müller", "muller"],
+    "days": [[15,46],[15,46],[15,46],[15,46],[15,46],[15,46],[15,46]]
+  },
+  {
+    "_comment": "Nordbad — Mo-So: 7:30-23",
+    "match": ["nordbad"],
+    "days": [[15,46],[15,46],[15,46],[15,46],[15,46],[15,46],[15,46]]
+  },
+  {
+    "_comment": "Olympia-Schwimmhalle — Mo-So: 7-23",
+    "match": ["olympia"],
+    "days": [[14,46],[14,46],[14,46],[14,46],[14,46],[14,46],[14,46]]
+  },
+  {
+    "_comment": "Südbad — Mo-Fr: 7-22:30; Sa-So: 7:30-23",
+    "match": ["südbad", "suedbad", "süd"],
+    "days": [[14,45],[14,45],[14,45],[14,45],[14,45],[15,46],[15,46]]
+  },
+  {
+    "_comment": "Westbad — Mo-So: 7:30-23",
+    "match": ["westbad"],
+    "days": [[15,46],[15,46],[15,46],[15,46],[15,46],[15,46],[15,46]]
+  }
+]
