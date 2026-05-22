@@ -140,6 +140,17 @@ func scrape() error {
 	return nil
 }
 
+// extractPoolData returns a map of pool name → utilization percentage (0–100).
+//
+// Pool-name extraction strategies (tried in order, first non-empty wins):
+//
+//  1. bath-name="Pool Name"  — web-component attribute present in both the
+//     static HTML and the Chromium-rendered DOM (current, 2026-05+).
+//  2. class="headline-s">Pool Name</h3> — inline heading used in the
+//     previous page design (legacy fallback).
+//
+// If neither strategy finds any names a diagnostic snippet of the pools
+// section is printed to help identify the new structure quickly.
 func extractPoolData(html string) map[string]int {
 	poolStats := make(map[string]int)
 
@@ -151,41 +162,66 @@ func extractPoolData(html string) map[string]int {
 
 	fmt.Printf("Pools section length: %d bytes\n", len(poolsSection))
 
-	rePoolName := regexp.MustCompile(`class="headline-s">([^<]+)</h3>`)
 	rePercent := regexp.MustCompile(`(\d+)\s*%`)
 
-	matches := rePoolName.FindAllStringSubmatchIndex(poolsSection, -1)
-	fmt.Printf("  Found %d pool name matches\n", len(matches))
+	type candidate struct {
+		name   string
+		endPos int // byte offset just past the name match — search for % from here
+	}
+	var candidates []candidate
 
-	for _, match := range matches {
-		if len(match) >= 4 {
-			name := poolsSection[match[2]:match[3]]
-			name = strings.TrimSpace(name)
-
-			if name == "" {
-				continue
+	// --- Strategy 1: bath-name="…" attribute (current, 2026-05+) ---
+	reBathName := regexp.MustCompile(`bath-name="([^"]+)"`)
+	for _, m := range reBathName.FindAllStringSubmatchIndex(poolsSection, -1) {
+		if len(m) >= 4 {
+			if name := strings.TrimSpace(poolsSection[m[2]:m[3]]); name != "" {
+				candidates = append(candidates, candidate{name, m[1]})
 			}
+		}
+	}
 
-			if _, exists := poolStats[name]; exists {
-				continue
+	// --- Strategy 2: <h3 class="headline-s">…</h3> (legacy, pre-2026-05) ---
+	if len(candidates) == 0 {
+		fmt.Println("  bath-name attribute not found — trying headline-s fallback")
+		reHeadline := regexp.MustCompile(`class="headline-s">([^<]+)</h3>`)
+		for _, m := range reHeadline.FindAllStringSubmatchIndex(poolsSection, -1) {
+			if len(m) >= 4 {
+				if name := strings.TrimSpace(poolsSection[m[2]:m[3]]); name != "" {
+					candidates = append(candidates, candidate{name, m[1]})
+				}
 			}
+		}
+	}
 
-			startPos := match[1]
-			endPos := startPos + 2000
-			if endPos > len(poolsSection) {
-				endPos = len(poolsSection)
-			}
-			searchArea := poolsSection[startPos:endPos]
+	fmt.Printf("  Found %d pool name candidates\n", len(candidates))
 
-			pctMatches := rePercent.FindAllStringSubmatch(searchArea, 5)
-			for _, pctMatch := range pctMatches {
-				if len(pctMatch) >= 2 {
-					pct, err := strconv.Atoi(pctMatch[1])
-					if err == nil && pct >= 0 && pct <= 100 {
-						poolStats[name] = pct
-						fmt.Printf("  Found: %s -> %d%%\n", name, pct)
-						break
-					}
+	if len(candidates) == 0 {
+		// Diagnostic: print a snippet so the new structure can be identified quickly.
+		snippet := poolsSection
+		if len(snippet) > 800 {
+			snippet = snippet[:800]
+		}
+		fmt.Printf("  Pools section snippet (first 800 bytes):\n%s\n", snippet)
+	}
+
+	for _, c := range candidates {
+		if _, exists := poolStats[c.name]; exists {
+			continue
+		}
+
+		endPos := c.endPos + 2000
+		if endPos > len(poolsSection) {
+			endPos = len(poolsSection)
+		}
+		searchArea := poolsSection[c.endPos:endPos]
+
+		for _, pctMatch := range rePercent.FindAllStringSubmatch(searchArea, 5) {
+			if len(pctMatch) >= 2 {
+				pct, err := strconv.Atoi(pctMatch[1])
+				if err == nil && pct >= 0 && pct <= 100 {
+					poolStats[c.name] = pct
+					fmt.Printf("  Found: %s -> %d%%\n", c.name, pct)
+					break
 				}
 			}
 		}
@@ -194,37 +230,55 @@ func extractPoolData(html string) map[string]int {
 	return poolStats
 }
 
-// extractPoolsSection returns only the HTML between the pools container
-// (id="bad") and the saunas container (id="sauna"). This is purely
-// structural — no pool/sauna name matching needed.
+// extractPoolsSection returns the HTML spanning all swimming-pool sections,
+// stopping before the sauna section.  It tries several known section IDs so
+// that a future page rename degrades gracefully instead of silently returning
+// no data.
 //
-// Page structure (as of 2026-04):
+// Known page structures:
 //
-//	<div ... id="bad">
-//	  <h2 ...>Echtzeit-Auslastung der Bäder</h2>
-//	  ... pool <h3> entries ...
-//	</div>
-//	<div ... id="sauna">
-//	  <h2 ...>Echtzeit-Auslastung der Saunen</h2>
-//	  ... sauna <h3> entries ...
-//	</div>
+//	2026-05+  id="freibad"  (outdoor pools)
+//	          id="hallenbad" (indoor pools)
+//	          id="sauna"    (saunas — marks the end; excluded)
+//
+//	~2026-04  id="bad"      (all pools combined)
+//	          id="sauna"    (saunas — marks the end; excluded)
 func extractPoolsSection(html string) string {
-	// Find the pools container: <div ... id="bad">
-	reBadStart := regexp.MustCompile(`<div[^>]*\bid="bad"[^>]*>`)
-	badLoc := reBadStart.FindStringIndex(html)
-	if badLoc == nil {
-		fmt.Println("Could not find id=\"bad\" section")
+	// IDs that mark the start of a pools section (tried from left-most occurrence).
+	poolStartIDs := []string{"freibad", "hallenbad", "bad"}
+
+	reID := func(id string) *regexp.Regexp {
+		return regexp.MustCompile(`<div[^>]*\bid="` + regexp.QuoteMeta(id) + `"[^>]*>`)
+	}
+
+	// Find the earliest occurrence of any known pool-start section.
+	start := -1
+	foundID := ""
+	for _, id := range poolStartIDs {
+		loc := reID(id).FindStringIndex(html)
+		if loc != nil && (start == -1 || loc[0] < start) {
+			start = loc[0]
+			foundID = id
+		}
+	}
+
+	if start == -1 {
+		fmt.Println("Could not find any pool section (tried: freibad, hallenbad, bad)")
+		// Diagnostic: list every <div id="..."> seen, to speed up future debugging.
+		reDivID := regexp.MustCompile(`<div[^>]*\bid="([^"]+)"`)
+		for _, m := range reDivID.FindAllStringSubmatch(html, 40) {
+			fmt.Printf("  Saw div id=%q\n", m[1])
+		}
 		return ""
 	}
 
-	section := html[badLoc[0]:]
+	fmt.Printf("  Found pool section start: id=%q\n", foundID)
+	section := html[start:]
 
-	// Find the saunas container: <div ... id="sauna">
-	// This marks the end of the pools section.
-	reSaunaStart := regexp.MustCompile(`<div[^>]*\bid="sauna"[^>]*>`)
-	saunaLoc := reSaunaStart.FindStringIndex(section)
-	if saunaLoc != nil {
+	// Clip at the sauna section (we never want sauna entries).
+	if saunaLoc := reID("sauna").FindStringIndex(section); saunaLoc != nil {
 		section = section[:saunaLoc[0]]
+		fmt.Println("  Clipped section at id=\"sauna\"")
 	}
 
 	return section
