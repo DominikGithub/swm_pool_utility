@@ -61,41 +61,41 @@ const tooltip = ref({ visible: false, x: 0, y: 0, text: '' })
 const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 // ---------------------------------------------------------------------------
-// Official SWM opening hours  (source: swm.de/baeder/hallenbaeder-muenchen)
+// Pool opening hours  (source: swm.de/baeder)
 //
-// Slots 0-47 represent 30-min intervals: slot 0 = 00:00, slot 14 = 07:00, …
-// Each day entry is [firstOpenSlot, firstClosedSlot).
-// Day indices: 0=Mon … 6=Sun.
+// Data is stored in src/data/pool-opening-hours.json so opening times can
+// be updated independently of component logic.
+//
+// Time-slot system (applies to all pool types equally):
+//
+//   Each day is split into 48 fixed-length 30‑minute intervals:
+//     slot 0  = 00:00–00:29      slot 14 = 07:00–07:29
+//     slot 1  = 00:30–00:59      slot 15 = 07:30–07:59
+//     …                          …
+//     slot 47 = 23:30–23:59
+//
+//   There are 7 entries per schedule, one for each day of the week:
+//     index 0 = Monday, 1 = Tuesday, … 6 = Sunday.
+//
+//   Each entry is [firstOpenSlot, firstClosedSlot) — a half-open interval.
+//   The pool is considered open from firstOpenSlot (inclusive) up to but
+//   NOT including firstClosedSlot.
+//
+//   Examples:
+//     [14, 46]  →  open 07:00, close 23:00  (firstClosedSlot=46 → 23:00)
+//     [20, 42]  →  open 10:00, close 21:00
+//     [16, 36]  →  open 08:00, close 18:00
+//
+// Freibad (outdoor pool) closing times are weather‑dependent (set Mon/Thu
+// by SWM based on the forecast).  The JSON uses 21:00 (slot 42) as an upper
+// bound — the statistical closedFraction detection in the hourly-avg API
+// catches actual earlier closings.
+//
+// Match ordering matters: more‑specific patterns (e.g. "dantebad") must
+// appear before less‑specific ones (e.g. "dante") because getSchedule()
+// returns the first match.
 // ---------------------------------------------------------------------------
-const POOL_SCHEDULES = [
-  // Bad Giesing-Harlaching — Sa-Mo: 8-18, Di-Fr: 8-21
-  { match: ['giesing'],
-    days: [[16,36],[16,42],[16,42],[16,42],[16,42],[16,36],[16,36]] },
-  // Cosimawellenbad — Mo-So: 7:30-23
-  { match: ['cosima'],
-    days: [[15,46],[15,46],[15,46],[15,46],[15,46],[15,46],[15,46]] },
-  // Dantebad — Mo,Mi,Fr: 7-23; Di,Do,Sa,So: 7:30-23
-  { match: ['dante'],
-    days: [[14,46],[15,46],[14,46],[15,46],[14,46],[15,46],[15,46]] },
-  // Michaelibad — Mo-So: 7:30-23
-  { match: ['michaeli'],
-    days: [[15,46],[15,46],[15,46],[15,46],[15,46],[15,46],[15,46]] },
-  // Müller'sches Volksbad — Mo-So: 7:30-23
-  { match: ['volksbad', 'müller', 'muller'],
-    days: [[15,46],[15,46],[15,46],[15,46],[15,46],[15,46],[15,46]] },
-  // Nordbad — Mo-So: 7:30-23
-  { match: ['nordbad'],
-    days: [[15,46],[15,46],[15,46],[15,46],[15,46],[15,46],[15,46]] },
-  // Olympia-Schwimmhalle — Mo-So: 7-23
-  { match: ['olympia'],
-    days: [[14,46],[14,46],[14,46],[14,46],[14,46],[14,46],[14,46]] },
-  // Südbad — Mo-Fr: 7-22:30; Sa-So: 7:30-23
-  { match: ['südbad', 'suedbad', 'süd'],
-    days: [[14,45],[14,45],[14,45],[14,45],[14,45],[15,46],[15,46]] },
-  // Westbad — Mo-So: 7:30-23
-  { match: ['westbad'],
-    days: [[15,46],[15,46],[15,46],[15,46],[15,46],[15,46],[15,46]] },
-]
+import POOL_SCHEDULES from '@/data/pool-opening-hours.json'
 
 // Cache schedule look-ups per pool name so we only search once.
 const scheduleCache = {}

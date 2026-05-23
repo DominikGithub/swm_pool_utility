@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -151,6 +152,15 @@ func scrape() error {
 //
 // If neither strategy finds any names a diagnostic snippet of the pools
 // section is printed to help identify the new structure quickly.
+//
+// Freibad normalization:
+// The SWM website reports 0% capacity remaining when Freibäder are closed
+// (instead of 100% like Hallenbäder).  Pools found in the id="freibad"
+// section are normalized so all pools use the same "closed" convention.
+// Hallenbad-section pools are NOT normalized because their 0% readings
+// during operating hours can be genuine (pool at full capacity).
+// The detection is fully dynamic — new pools added to the freibad section
+// are handled automatically.
 func extractPoolData(html string) map[string]int {
 	poolStats := make(map[string]int)
 
@@ -227,7 +237,87 @@ func extractPoolData(html string) map[string]int {
 		}
 	}
 
+	// Normalize Freibad closed-state values.
+	// The SWM website reports 0% capacity remaining for closed Freibäder
+	// (instead of 100% free like Hallenbäder).  Detect which pools appear
+	// inside <div id="freibad"> and convert 0 → 100 so all pools use the
+	// same "nobody there / closed" convention.
+	//
+	// Hallenbäder (id="hallenbad") are NOT normalized because their 0%
+	// readings during operating hours can be genuine (pool at full capacity
+	// on hot days, e.g. Cosimawellenbad on May 2 2026).
+	freibadPools := freibadPoolNames(html)
+	for name, utility := range poolStats {
+		if utility == 0 && freibadPools[name] {
+			poolStats[name] = 100
+			fmt.Printf("  Normalized closed Freibad: %s 0%% → 100%%\n", name)
+		}
+	}
+
 	return poolStats
+}
+
+// freibadPoolNames returns the set of pool names that appear in the
+// id="freibad" HTML section.  These outdoor pools use an inverted convention
+// where 0% means "closed" (instead of the Hallenbad convention where 100%
+// means "closed").  The detection is dynamic: any pool whose bath-name
+// attribute sits inside <div id="freibad"> is included, so future pool
+// additions require no code changes.
+//
+// Hallenbad-section pools are deliberately excluded — see extractPoolData
+// for the rationale.
+func freibadPoolNames(html string) map[string]bool {
+	names := map[string]bool{}
+	reStart := regexp.MustCompile(`<div[^>]*\bid="freibad"[^>]*>`)
+	loc := reStart.FindStringIndex(html)
+	if loc == nil {
+		return names
+	}
+	section := html[loc[0]:]
+
+	// Clip at the next known section boundary.
+	for _, stopID := range []string{"hallenbad", "sauna"} {
+		reStop := regexp.MustCompile(`<div[^>]*\bid="` + regexp.QuoteMeta(stopID) + `"[^>]*>`)
+		if stopLoc := reStop.FindStringIndex(section); stopLoc != nil {
+			section = section[:stopLoc[0]]
+			break
+		}
+	}
+
+	reBathName := regexp.MustCompile(`bath-name="([^"]+)"`)
+	for _, m := range reBathName.FindAllStringSubmatch(section, -1) {
+		if len(m) >= 2 {
+			if name := strings.TrimSpace(m[1]); name != "" {
+				names[name] = true
+			}
+		}
+	}
+	if len(names) == 0 {
+		reHeadline := regexp.MustCompile(`class="headline-s">([^<]+)</h3>`)
+		for _, m := range reHeadline.FindAllStringSubmatch(section, -1) {
+			if len(m) >= 2 {
+				if name := strings.TrimSpace(m[1]); name != "" {
+					names[name] = true
+				}
+			}
+		}
+	}
+
+	if len(names) > 0 {
+		fmt.Printf("  Freibad section pools: %v\n", getSortedKeys(names))
+	}
+	return names
+}
+
+// getSortedKeys returns the keys of m in alphabetical order for deterministic
+// log output.
+func getSortedKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // extractPoolsSection returns the HTML spanning all swimming-pool sections,

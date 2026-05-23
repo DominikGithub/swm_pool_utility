@@ -281,13 +281,35 @@ const chartData = computed(() => {
   const labels = sortedEntries.map(e => e[0])
   const timestamps = sortedEntries.map(e => e[1])
 
-  const datasets = Object.entries(poolGroups).map(([name, items], i) => ({
-    label: name,
-    data: items,
-    borderColor: CHART_COLORS[i % CHART_COLORS.length],
-    tension: 0.3,
-    fill: false
-  }))
+  const datasets = Object.entries(poolGroups).map(([name, items], i) => {
+    // Break the line when consecutive data points are more than ~30 min apart
+    // (3 label slots at the 10-min scrape interval).  This prevents chart.js
+    // from drawing a diagonal line across multi-day gaps (e.g. Michaelibad
+    // closed for renovations Apr 27 – May 22, 2026).
+    const data = []
+    const sorted = [...items].sort((a, b) => {
+      const ai = labels.indexOf(a.x); const bi = labels.indexOf(b.x)
+      return ai - bi
+    })
+    for (let j = 0; j < sorted.length; j++) {
+      data.push(sorted[j])
+      if (j < sorted.length - 1) {
+        const ai = labels.indexOf(sorted[j].x)
+        const bi = labels.indexOf(sorted[j + 1].x)
+        if (bi - ai > 3) {
+          data.push({ x: labels[Math.floor((ai + bi) / 2)], y: null })
+        }
+      }
+    }
+    return {
+      label: name,
+      data,
+      borderColor: CHART_COLORS[i % CHART_COLORS.length],
+      spanGaps: false,
+      tension: 0.3,
+      fill: false
+    }
+  })
 
   // Number of historical labels before prediction labels are appended.
   // Used by the chart to clamp the crosshair to the last measured point.

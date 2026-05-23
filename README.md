@@ -236,7 +236,7 @@ The SQLite database is stored in a Docker volume (`db_data`). Use the following 
 
 ```bash
 # Copy the database file from the volume to the host
-docker cp swm_pool_utility-api-1:/data/swm_pool_utility.db ./backup.db
+docker cp swm_pool_utility-api-1:/data/swm_pool_utility.db ./backup_2026MMDD.db
 ```
 
 ### Restore
@@ -249,7 +249,7 @@ docker volume inspect swm_pool_utility_db_data --format '{{ .Mountpoint }}'
 docker compose stop api pool-scraper weather-scraper daily-stats
 
 # Replace the .db file on the hosts docker volume mount point
-cp ./backup.db $(docker volume inspect swm_pool_utility_db_data --format '{{ .Mountpoint }}')/swm_pool_utility.db
+cp ./backup_2026MMDD.db $(docker volume inspect swm_pool_utility_db_data --format '{{ .Mountpoint }}')/swm_pool_utility.db
 
 # Restart services
 docker compose start api pool-scraper weather-scraper daily-stats
@@ -354,47 +354,47 @@ Prediction horizon: 2 hours ahead in 10-minute steps (12 steps per cycle). The s
 ### Model Training
 
 ```
-Loaded 44721 rows for 9 pools
-Loaded 340 weather rows
-Loaded 9072 daily-avg cache entries
+Loaded 87054 rows for 17 pools
+Loaded 965 weather rows
+Loaded 10200 daily-avg cache entries
 After feature engineering: 44613 rows
-  Train: 3999 rows, Val: 1000 rows  (80/20 split)
-  Training RandomForest for 'Dante-Winter-Warmfreibad' on 3999 samples...
+  Train: 8868 rows, Val: 2217 rows  (80/20 split)
+  Training RandomForest for 'Olympia-Schwimmhalle' on 8868 samples...
 
 Example feature distribution:
-  Dante-Winter-Warmfreibad — delta MAE: 0.36pp, RMSE: 0.71pp, R²: 0.476
+  Olympia-Schwimmhalle — delta MAE: 0.62pp, RMSE: 0.99pp, R²: 0.531
   Feature importances:
-    util_momentum             0.2704  █████████████████████████████████████████████████████████████████████████████████
-    avg_weekday_delta         0.1790  ██████████████████████████████████████████████████████
-    util_change_30m           0.0810  ████████████████████████
-    hour                      0.0748  ██████████████████████
-    util_accel                0.0640  ███████████████████
-    util_rolling_30m          0.0509  ███████████████
-    util_lag_60m              0.0465  ██████████████
-    day_of_year               0.0385  ████████████
-    util_lag_30m              0.0318  ██████████
-    util_rolling_1h           0.0238  ███████
-    temperature               0.0227  ███████
-    util_lag_20m              0.0203  ██████
-    util_lag_10m              0.0177  █████
-    util_change_10m           0.0173  █████
-    wind_speed                0.0162  █████
-    minute                    0.0156  █████
-    cloud_cover               0.0146  ████
-    day_of_week               0.0126  ████
-    is_holiday                0.0009  █
-    precipitation             0.0009  █
+    util_momentum             0.1852  ████████████████████████████████████████████████████████
+    hour                      0.1492  █████████████████████████████████████████████
+    avg_weekday_delta         0.1477  ████████████████████████████████████████████
+    util_change_30m           0.1311  ███████████████████████████████████████
+    util_lag_60m              0.0636  ███████████████████
+    util_lag_30m              0.0522  ████████████████
+    day_of_year               0.0488  ███████████████
+    util_rolling_30m          0.0426  █████████████
+    minute                    0.0336  ██████████
+    util_accel                0.0282  ████████
+    util_rolling_1h           0.0249  ███████
+    util_lag_10m              0.0193  ██████
+    util_lag_20m              0.0149  ████
+    wind_speed                0.0132  ████
+    util_change_10m           0.0128  ████
+    temperature               0.0125  ████
+    day_of_week               0.0123  ████
+    cloud_cover               0.0070  ██
     is_weekend                0.0006  █
+    is_holiday                0.0004  █
+    precipitation             0.0001  █
     season                    0.0000  █
     days_to_holiday           0.0000  █
 === Summary ===
-  Bad Giesing-Harlaching:   MAE=0.4%  R²=0.345
-  Cosimawellenbad:          MAE=0.4%  R²=0.367
-  Dante-Winter-Warmfreibad: MAE=0.4%  R²=0.476
-  Michaelibad:              MAE=0.5%  R²=0.571
-  Müller’sches Volksbad:    MAE=0.6%  R²=0.417
-  Nordbad:                  MAE=0.5%  R²=0.444
-  Olympia-Schwimmhalle:     MAE=0.3%  R²=0.422
-  Südbad:                   MAE=0.5%  R²=0.343
-  Westbad:                  MAE=0.4%  R²=0.466
+  Bad Giesing-Harlaching    MAE=0.9%   R²=0.476
+  Cosimawellenbad           MAE=0.7%   R²=0.359
+  Dante-Winter-Warmfreibad  MAE=0.3%   R²=0.468
+  Michaelibad               MAE=0.8%   R²=0.354
+  Müller’sches Volksbad     MAE=1.2%   R²=0.367
+  Nordbad                   MAE=0.9%   R²=0.407
+  Olympia-Schwimmhalle      MAE=0.6%   R²=0.531
+  Südbad                    MAE=1.1%   R²=0.333
+  Westbad                   MAE=0.6%   R²=0.291
 ```
