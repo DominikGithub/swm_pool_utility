@@ -275,24 +275,52 @@ func getDailyAvg(c *gin.Context) {
 func getHourlyAvg(c *gin.Context) {
 	pool := c.Query("pool")
 
-	query := `
-		SELECT
-			p.name as pool_name,
-			strftime('%w', datetime(tp.dtime, '+2 hours')) as dow,
-			strftime('%H', datetime(tp.dtime, '+2 hours')) * 2 +
-				CASE WHEN CAST(strftime('%M', datetime(tp.dtime, '+2 hours')) AS INTEGER) >= 30 THEN 1 ELSE 0 END as slot,
-			AVG(tp.utility) as mean_util,
-			COUNT(*) as sample_count,
-			SUM(CASE WHEN tp.utility >= 99 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) as closed_fraction
-		FROM track_pools tp JOIN pools p ON tp.pool_id = p.id
-		WHERE tp.dtime >= datetime('now', '-60 days')
-	`
+	// Median aggregation via CTEs + SQLite window functions.
+	//
+	// base:   extracts pool name, day-of-week, 30-min slot, and raw utility.
+	//         The slot/dow expressions are written once here and reused by name.
+	// ranked: assigns a rank ordered by utility within each (pool, dow, slot)
+	//         partition and records the partition size.
+	// final:  keeps only the middle row(s) — one for odd counts, two for even —
+	//         and averages them.  This is the standard median definition.
+	baseFilter := ""
 	var args []interface{}
 	if pool != "" {
-		query += " AND p.name = ?"
+		baseFilter = " AND p.name = ?"
 		args = append(args, pool)
 	}
-	query += " GROUP BY p.name, dow, slot ORDER BY p.name, dow, slot"
+
+	query := `
+		WITH base AS (
+			SELECT
+				p.name AS pool_name,
+				strftime('%w', datetime(tp.dtime, '+2 hours')) AS dow,
+				strftime('%H', datetime(tp.dtime, '+2 hours')) * 2 +
+					CASE WHEN CAST(strftime('%M', datetime(tp.dtime, '+2 hours'))
+					     AS INTEGER) >= 30 THEN 1 ELSE 0 END  AS slot,
+				tp.utility
+			FROM track_pools tp JOIN pools p ON tp.pool_id = p.id
+			WHERE tp.dtime >= datetime('now', '-60 days')` + baseFilter + `
+		),
+		ranked AS (
+			SELECT *,
+				ROW_NUMBER() OVER (PARTITION BY pool_name, dow, slot ORDER BY utility) AS rn,
+				COUNT(*)       OVER (PARTITION BY pool_name, dow, slot)                AS cnt,
+				SUM(CASE WHEN utility >= 99 THEN 1 ELSE 0 END)
+				               OVER (PARTITION BY pool_name, dow, slot)                AS closed_sum
+			FROM base
+		)
+		SELECT
+			pool_name,
+			dow,
+			slot,
+			AVG(utility)                      AS median_util,
+			MAX(cnt)                          AS sample_count,
+			MAX(closed_sum) * 1.0 / MAX(cnt)  AS closed_fraction
+		FROM ranked
+		WHERE rn IN ((cnt + 1) / 2, (cnt + 2) / 2)
+		GROUP BY pool_name, dow, slot
+		ORDER BY pool_name, dow, slot`
 
 	rows, err := db.Query(query, args...)
 	if err != nil {

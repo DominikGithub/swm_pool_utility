@@ -244,6 +244,7 @@ const chartData = computed(() => {
       })
     })
 
+    datasets.forEach(ds => { ds.data = ds.data.filter(p => p != null) })
     return { labels: apiData.labels, datasets, historyLength: apiData.labels.length }
   }
 
@@ -391,6 +392,7 @@ const chartData = computed(() => {
     }
   }
 
+  datasets.forEach(ds => { ds.data = ds.data.filter(p => p != null) })
   return { labels, datasets, timestamps, historyLength }
 })
 
