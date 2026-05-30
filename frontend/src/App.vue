@@ -200,13 +200,13 @@ const chartData = computed(() => {
 
       const points = apiData.labels.map((label, idx) => {
         const v = rawData[idx]
-        return v < 0 ? null : { x: label, y: v }
+        return v < 0 ? { x: label, y: NaN } : { x: label, y: v }
       })
 
       if (isSinglePool) {
         datasets.push({
           label: ds.label + ' (lower)',
-          data: points.map((p, idx) => p !== null ? { x: p.x, y: Math.max(0, p.y - (stddev[idx] || 0)) } : null),
+          data: points.map((p, idx) => !isNaN(p.y) ? { x: p.x, y: Math.max(0, p.y - (stddev[idx] || 0)) } : p),
           borderColor: 'transparent',
           borderWidth: 0,
           pointRadius: 0,
@@ -219,7 +219,7 @@ const chartData = computed(() => {
         })
         datasets.push({
           label: ds.label + ' (upper)',
-          data: points.map((p, idx) => p !== null ? { x: p.x, y: Math.min(100, p.y + (stddev[idx] || 0)) } : null),
+          data: points.map((p, idx) => !isNaN(p.y) ? { x: p.x, y: Math.min(100, p.y + (stddev[idx] || 0)) } : p),
           borderColor: 'transparent',
           borderWidth: 0,
           pointRadius: 0,
