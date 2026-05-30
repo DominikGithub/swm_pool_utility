@@ -252,6 +252,7 @@ func extractPoolData(html string) map[string]int {
 		"Naturbad Maria Einsiedel":   true,
 		"Prinzregentenbad":           true,
 		"Schyrenbad":                 true,
+		"Südbad":                     true,
 		"Ungererbad":                 true,
 	}
 	for name, utility := range poolStats {
