@@ -286,7 +286,7 @@ func getHourlyAvg(c *gin.Context) {
 	baseFilter := ""
 	var args []interface{}
 	if pool != "" {
-		baseFilter = " AND p.name = ?"
+		baseFilter = " WHERE p.name = ?"
 		args = append(args, pool)
 	}
 
@@ -300,7 +300,7 @@ func getHourlyAvg(c *gin.Context) {
 					     AS INTEGER) >= 30 THEN 1 ELSE 0 END  AS slot,
 				tp.utility
 			FROM track_pools tp JOIN pools p ON tp.pool_id = p.id
-			WHERE tp.dtime >= datetime('now', '-60 days')` + baseFilter + `
+			` + baseFilter + `
 		),
 		ranked AS (
 			SELECT *,

@@ -142,15 +142,20 @@ func scrape() error {
 
 // extractPoolData returns a map of pool name → utilization percentage (0–100).
 //
-// Pool-name extraction strategies (tried in order, first non-empty wins):
+// Parsing strategy (current, 2026-06+):
 //
-//  1. bath-name="Pool Name"  — web-component attribute present in both the
-//     static HTML and the Chromium-rendered DOM (current, 2026-05+).
-//  2. class="headline-s">Pool Name</h3> — inline heading used in the
-//     previous page design (legacy fallback).
+//   The SWM page renders each pool as a <li class="bath-capacity-item">
+//   element that contains BOTH the pool name (<h3 class="headline-s">)
+//   and its utilisation percentage (either a progress bar with
+//   style="width: XX%" or a "closed-msg" block).  We parse each <li>
+//   as an atomic unit — name, percentage, and closure status all
+//   come from the same element, so a closed pool can NEVER borrow its
+//   neighbour's number.
 //
-// If neither strategy finds any names a diagnostic snippet of the pools
-// section is printed to help identify the new structure quickly.
+//   Legacy fallback: if no <li class="bath-capacity-item"> elements are
+//   found (pre-2026-05 page design), we fall back to searching for
+//   <h3 class="headline-s"> headings and the first following % value,
+//   bounded by the next heading.
 //
 // Normalization:
 // The SWM website reports 0% capacity remaining when certain pools are
@@ -169,69 +174,119 @@ func extractPoolData(html string) map[string]int {
 
 	fmt.Printf("Pools section length: %d bytes\n", len(poolsSection))
 
-	rePercent := regexp.MustCompile(`(\d+)\s*%`)
+	// --- Parse <li class="bath-capacity-item"> elements (current design) ---
+	// Each <li> is a self-contained pool card: name + progress bar (or closure msg).
+	reItem := regexp.MustCompile(`<li class="bath-capacity-item">`)
+	itemLocs := reItem.FindAllStringIndex(poolsSection, -1)
 
-	type candidate struct {
-		name   string
-		endPos int // byte offset just past the name match — search for % from here
-	}
-	var candidates []candidate
+	if len(itemLocs) > 0 {
+		reHeadline := regexp.MustCompile(`class="headline-s">([^<]+)</h3>`)
+		rePctBar := regexp.MustCompile(`style="width:\s*(\d+)\s*%`)
+		reClosed := regexp.MustCompile(`closed-msg`)
 
-	// --- Strategy 1: bath-name="…" attribute (current, 2026-05+) ---
-	reBathName := regexp.MustCompile(`bath-name="([^"]+)"`)
-	for _, m := range reBathName.FindAllStringSubmatchIndex(poolsSection, -1) {
-		if len(m) >= 4 {
-			if name := strings.TrimSpace(poolsSection[m[2]:m[3]]); name != "" {
-				candidates = append(candidates, candidate{name, m[1]})
+		matched := 0
+		skipped := 0
+		for i, loc := range itemLocs {
+			// Section from this <li> to the next (or end of pools section)
+			start := loc[0]
+			end := len(poolsSection)
+			if i+1 < len(itemLocs) {
+				end = itemLocs[i+1][0]
 			}
+			block := poolsSection[start:end]
+
+			// Extract pool name from the first <h3> in this block
+			nameMatch := reHeadline.FindStringSubmatch(block)
+			if nameMatch == nil {
+				continue
+			}
+			name := strings.TrimSpace(nameMatch[1])
+
+			// Skip closure notices — these blocks have no progress bar
+			if isClosureNotice(name) || reClosed.MatchString(block) {
+				fmt.Printf("  Skipping closed: %q\n", name)
+				skipped++
+				continue
+			}
+
+			// Extract percentage from the progress bar style attribute
+			pctMatch := rePctBar.FindStringSubmatch(block)
+			if pctMatch == nil {
+				fmt.Printf("  No %% for: %s (closed / no data)\n", name)
+				continue
+			}
+			pct, err := strconv.Atoi(pctMatch[1])
+			if err != nil || pct < 0 || pct > 100 {
+				continue
+			}
+
+			poolStats[name] = pct
+			fmt.Printf("  Found: %s -> %d%%\n", name, pct)
+			matched++
 		}
+		fmt.Printf("  Parsed %d pool cards (%d with %%, %d closed)\n",
+			len(itemLocs), matched, skipped)
 	}
 
-	// --- Strategy 2: <h3 class="headline-s">…</h3> (legacy, pre-2026-05) ---
-	if len(candidates) == 0 {
-		fmt.Println("  bath-name attribute not found — trying headline-s fallback")
+	// --- Legacy fallback: headline-s headings with bounded search ---
+	if len(poolStats) == 0 {
+		fmt.Println("  No bath-capacity-item elements — trying legacy fallback")
+		type headline struct {
+			name  string
+			start int
+		}
+		var headlines []headline
 		reHeadline := regexp.MustCompile(`class="headline-s">([^<]+)</h3>`)
 		for _, m := range reHeadline.FindAllStringSubmatchIndex(poolsSection, -1) {
 			if len(m) >= 4 {
 				if name := strings.TrimSpace(poolsSection[m[2]:m[3]]); name != "" {
-					candidates = append(candidates, candidate{name, m[1]})
+					headlines = append(headlines, headline{name, m[1]})
 				}
 			}
 		}
-	}
-
-	fmt.Printf("  Found %d pool name candidates\n", len(candidates))
-
-	if len(candidates) == 0 {
-		// Diagnostic: print a snippet so the new structure can be identified quickly.
-		snippet := poolsSection
-		if len(snippet) > 800 {
-			snippet = snippet[:800]
+		if len(headlines) == 0 {
+			snippet := poolsSection
+			if len(snippet) > 800 {
+				snippet = snippet[:800]
+			}
+			fmt.Printf("  No pool name candidates found. Snippet:\n%s\n", snippet)
+			return poolStats
 		}
-		fmt.Printf("  Pools section snippet (first 800 bytes):\n%s\n", snippet)
-	}
-
-	for _, c := range candidates {
-		if _, exists := poolStats[c.name]; exists {
-			continue
+		rePercent := regexp.MustCompile(`(\d+)\s*%`)
+		nextStart := func(i int) int {
+			if i+1 < len(headlines) {
+				return headlines[i+1].start
+			}
+			return len(poolsSection)
 		}
-
-		endPos := c.endPos + 2000
-		if endPos > len(poolsSection) {
-			endPos = len(poolsSection)
-		}
-		searchArea := poolsSection[c.endPos:endPos]
-
-		for _, pctMatch := range rePercent.FindAllStringSubmatch(searchArea, 5) {
-			if len(pctMatch) >= 2 {
-				pct, err := strconv.Atoi(pctMatch[1])
-				if err == nil && pct >= 0 && pct <= 100 {
-					poolStats[c.name] = pct
-					fmt.Printf("  Found: %s -> %d%%\n", c.name, pct)
-					break
+		skipped := 0
+		matched := 0
+		for i, h := range headlines {
+			if isClosureNotice(h.name) {
+				fmt.Printf("  Skipping closure notice: %q\n", h.name)
+				skipped++
+				continue
+			}
+			searchArea := poolsSection[h.start:nextStart(i)]
+			found := false
+			for _, pctMatch := range rePercent.FindAllStringSubmatch(searchArea, 1) {
+				if len(pctMatch) >= 2 {
+					pct, err := strconv.Atoi(pctMatch[1])
+					if err == nil && pct >= 0 && pct <= 100 {
+						poolStats[h.name] = pct
+						fmt.Printf("  Found: %s -> %d%%\n", h.name, pct)
+						found = true
+						matched++
+						break
+					}
 				}
 			}
+			if !found {
+				fmt.Printf("  No %% for: %s (closed / no data)\n", h.name)
+			}
 		}
+		fmt.Printf("  Legacy parse: %d names (%d with %%, %d closure notices)\n",
+			len(headlines), matched, skipped)
 	}
 
 	// Pools whose scraped 0% capacity remaining means "closed" and should
@@ -248,6 +303,7 @@ func extractPoolData(html string) map[string]int {
 		"Freibad West":               true,
 		"Michaeli-Freibad":           true,
 		"Michaelibad":                true,
+		"Müller'sches Volksbad":      true,
 		"Naturbad Georgenschwaige":   true,
 		"Naturbad Maria Einsiedel":   true,
 		"Prinzregentenbad":           true,
@@ -263,6 +319,34 @@ func extractPoolData(html string) map[string]int {
 	}
 
 	return poolStats
+}
+
+// isClosureNotice returns true when name looks like a closure/status message
+// rather than an actual swimming-pool name.  The SWM website renders these
+// headlines for pools that are temporarily out of service (renovation,
+// seasonal closure, etc.), e.g. "Geschlossen – in Revision".  Accepting
+// such strings as pool names would create phantom pool entries and
+// incorrectly assign another pool's utilisation percentage to them.
+func isClosureNotice(name string) bool {
+	lower := strings.ToLower(name)
+	for _, phrase := range []string{
+		"geschlossen",
+		"closed",
+		"ab sofort",
+		"in revision",
+		"instandhaltung",
+		"wartungsarbeit",
+		"revision",
+	} {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	// If the name is extremely short and not a known pool, it's suspicious.
+	if len(strings.TrimSpace(name)) < 4 {
+		return true
+	}
+	return false
 }
 
 // extractPoolsSection returns the HTML spanning all swimming-pool sections,

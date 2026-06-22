@@ -22,6 +22,11 @@ services:
              sqlite3 /data/swm_pool_utility.db 'CREATE TABLE IF NOT EXISTS predictions(id INTEGER PRIMARY KEY AUTOINCREMENT, pool_name VARCHAR NOT NULL UNIQUE, current_util REAL NOT NULL, pred_1h REAL NOT NULL, pred_2h REAL NOT NULL, delta_1h REAL NOT NULL, delta_2h REAL NOT NULL, trend_strength REAL NOT NULL, trend_direction VARCHAR NOT NULL, model_version VARCHAR, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, pred_series TEXT, UNIQUE(pool_name));' &&
              chmod 666 /data/swm_pool_utility.db"
     restart: "no"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   api:
     build: ./api
@@ -30,6 +35,11 @@ services:
     ports:
       - "8085:8085"
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8085/api/health"]
       interval: 30s
@@ -43,6 +53,11 @@ services:
     environment:
       - DB_PATH=/data/swm_pool_utility.db
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   weather-scraper:
     build: ./weather
@@ -51,6 +66,11 @@ services:
     environment:
       - DB_PATH=/data/swm_pool_utility.db
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   daily-stats:
     build: ./daily-stats
@@ -59,12 +79,22 @@ services:
     environment:
       - DB_PATH=/data/swm_pool_utility.db
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   frontend:
     build: ./frontend
     ports:
       - "8086:80"
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       - api
 
@@ -75,6 +105,11 @@ services:
     environment:
       - DB_PATH=/data/swm_pool_utility.db
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   ml-prediction:
     build: ./ml-prediction
@@ -85,6 +120,11 @@ services:
       - DB_PATH=/data/swm_pool_utility.db
       - MODEL_DIR=/models
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       - weather-forecast-scraper
 
@@ -99,6 +139,11 @@ services:
       - RETRAIN_HOUR=2          # 02:00 Europe/Berlin
     command: ["--daemon"]
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   db_data:
