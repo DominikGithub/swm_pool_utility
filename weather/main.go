@@ -22,10 +22,15 @@ var db *sql.DB
 var weatherTypeIDs = map[string]int64{}
 
 const (
-	munichLat    = 48.1372
-	munichLon    = 11.5755
-	openMeteoURL = "https://api.open-meteo.com/v1/forecast"
+	munichLat             = 48.1372
+	munichLon             = 11.5755
+	openMeteoURL          = "https://api.open-meteo.com/v1/forecast"
+	weatherRequestTimeout = 30 * time.Second
+	weatherRetryDelay     = 15 * time.Second
+	maxFetchAttempts      = 3
 )
+
+var weatherHTTPClient = &http.Client{Timeout: weatherRequestTimeout}
 
 type OpenMeteoResponse struct {
 	Current struct {
@@ -108,7 +113,7 @@ func fetchWeather() (*WeatherData, error) {
 	url := fmt.Sprintf("%s?latitude=%.4f&longitude=%.4f&current=temperature_2m,wind_speed_10m,wind_direction_10m,precipitation,cloud_cover,weather_code&timezone=Europe/Berlin",
 		openMeteoURL, munichLat, munichLon)
 
-	resp, err := http.Get(url)
+	resp, err := weatherHTTPClient.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
@@ -176,6 +181,20 @@ func saveWeather(w *WeatherData) error {
 	return err
 }
 
+func fetchAndSaveWeatherWithRetry() error {
+	var err error
+	for attempt := 1; attempt <= maxFetchAttempts; attempt++ {
+		if err = fetchAndSaveWeather(); err == nil {
+			return nil
+		}
+		if attempt < maxFetchAttempts {
+			log.Printf("Weather fetch attempt %d/%d failed: %v; retrying in %s", attempt, maxFetchAttempts, err, weatherRetryDelay)
+			time.Sleep(weatherRetryDelay)
+		}
+	}
+	return err
+}
+
 func main() {
 	runOnce := false
 	for _, arg := range os.Args[1:] {
@@ -188,10 +207,11 @@ func main() {
 	defer db.Close()
 
 	fmt.Println("Weather scraper starting...")
-
-	if err := fetchAndSaveWeather(); err != nil {
+	if err := fetchAndSaveWeatherWithRetry(); err != nil {
 		log.Printf("Failed to fetch weather: %v", err)
-		os.Exit(1)
+		if runOnce {
+			os.Exit(1)
+		}
 	}
 
 	if !runOnce {
@@ -199,7 +219,7 @@ func main() {
 		defer ticker.Stop()
 
 		for range ticker.C {
-			if err := fetchAndSaveWeather(); err != nil {
+			if err := fetchAndSaveWeatherWithRetry(); err != nil {
 				log.Printf("Failed to fetch weather: %v", err)
 			}
 		}
