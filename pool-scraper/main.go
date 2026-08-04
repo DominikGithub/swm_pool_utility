@@ -1,15 +1,17 @@
 /*
-Pool scraper — collects live occupancy data from the SWM website.
+Pool scraper — collects live occupancy data from the SWM REST API.
 */
 package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"math"
+	"net/http"
 	"os"
-	"os/exec"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -39,7 +41,21 @@ func initDB() {
 	loadPoolIDs()
 }
 
+// normalizeName replaces Unicode smart quotes and other visually-similar
+// characters with their ASCII equivalents.  The SWM website sometimes uses
+// typographic quotes (\u2019) while the REST API uses ASCII apostrophes (\u0027).
+// Normalizing ensures we never create duplicate pool entries because of
+// invisible Unicode differences.
+func normalizeName(name string) string {
+	name = strings.ReplaceAll(name, "\u2018", "'") // left single quotation mark
+	name = strings.ReplaceAll(name, "\u2019", "'") // right single quotation mark
+	name = strings.ReplaceAll(name, "\u201c", `"`) // left double quotation mark
+	name = strings.ReplaceAll(name, "\u201d", `"`) // right double quotation mark
+	return name
+}
+
 // loadPoolIDs reads all existing pools into the in-memory cache.
+// Names are normalized so that the in-memory lookup is always consistent.
 func loadPoolIDs() {
 	rows, err := db.Query("SELECT id, name FROM pools")
 	if err != nil {
@@ -54,18 +70,32 @@ func loadPoolIDs() {
 		if err := rows.Scan(&id, &name); err != nil {
 			continue
 		}
-		poolIDs[name] = id
+		key := normalizeName(name)
+		if existing, ok := poolIDs[key]; ok {
+			// Two pool rows with different Unicode but the same normalized
+			// name — keep the one with more track_pools data.
+			var cnt1, cnt2 int
+			db.QueryRow("SELECT COUNT(*) FROM track_pools WHERE pool_id = ?", existing).Scan(&cnt1)
+			db.QueryRow("SELECT COUNT(*) FROM track_pools WHERE pool_id = ?", id).Scan(&cnt2)
+			if cnt2 > cnt1 {
+				poolIDs[key] = id
+			}
+			log.Printf("warning: duplicate pool names %q (ids %d, %d) — keeping id %d",
+				key, existing, id, poolIDs[key])
+		} else {
+			poolIDs[key] = id
+		}
 	}
 }
 
 // getOrCreatePoolID returns the pools.id for name, inserting a new row if this
-// is the first time the pool has been seen.
+// is the first time the pool has been seen.  The name is normalized before
+// lookup and insert to avoid duplicates from invisible Unicode differences.
 func getOrCreatePoolID(name string) (int64, error) {
+	name = normalizeName(name)
 	if id, ok := poolIDs[name]; ok {
 		return id, nil
 	}
-	// INSERT OR IGNORE is safe to call concurrently (single goroutine here, but
-	// harmless even if called twice due to restart races).
 	if _, err := db.Exec("INSERT OR IGNORE INTO pools(name) VALUES (?)", name); err != nil {
 		return 0, fmt.Errorf("insert pool %q: %w", name, err)
 	}
@@ -77,47 +107,130 @@ func getOrCreatePoolID(name string) (int64, error) {
 	return id, nil
 }
 
+// --- API response types ---
+
+type apiResponse struct {
+	ReturnCode string     `json:"return_code"`
+	Data       []location `json:"data"`
+}
+
+type location struct {
+	LocationID       int    `json:"location_id"`
+	LocationName     string `json:"location_name"`
+	CustomerAmount   int    `json:"customer_amount"`
+	CustomerAmountMax int   `json:"customer_amount_max"`
+	AreaList          []area `json:"area_list"`
+}
+
+type area struct {
+	AreaID           int    `json:"area_id"`
+	AreaName         string `json:"area_name"`
+	CustomerAmount   int    `json:"customer_amount"`
+	CustomerAmountMax int   `json:"customer_amount_max"`
+}
+
+// --- Pool name mapping ---
+//
+// Maps API area_name → database pool name.  Sauna areas are excluded.
+// A missing entry means the area is skipped (e.g. unknown areas, saunas).
+var areaToPool = map[string]string{
+	// Freibäder (outdoor pools)
+	"Bad Georgenschwaige Freibad":       "Naturbad Georgenschwaige",
+	"Dantebad Freibad":                 "Dantebad",
+	"Freibad West":                     "Freibad West",
+	"Naturbad Maria Einsiedel Freibad": "Naturbad Maria Einsiedel",
+	"Michaelibad Freibad":              "Michaeli-Freibad",
+	"Prinzregentenbad Freibad":         "Prinzregentenbad",
+	"Schyrenbad Freibad":               "Schyrenbad",
+	"Ungererbad Freibad":               "Ungererbad",
+
+	// Hallenbäder (indoor pools)
+	"Cosimawellenbad Hallenbad":        "Cosimawellenbad",
+	"Dante-Winter-Warmfreibad":         "Dante-Winter-Warmfreibad",
+	"Michaelibad Hallenbad":            "Michaelibad",
+	"Müller'sches Volksbad Hallenbad":  "Müller'sches Volksbad",
+	"Nordbad Hallenbad":                "Nordbad",
+	"Südbad Hallenbad":                 "Südbad",
+	"Westbad Hallenbad":                "Westbad",
+}
+
+var httpClient = &http.Client{
+	Timeout: 30 * time.Second,
+}
+
 func scrape() error {
-	fmt.Println("Starting scrape...")
+	fmt.Println("Starting scrape via REST API...")
 
-	configDir := "/tmp/chromium-data"
-	os.RemoveAll(configDir)
-	os.MkdirAll(configDir, 0755)
+	apiURL := os.Getenv("SWM_API_URL")
+	if apiURL == "" {
+		apiURL = "https://www.swm.de/.rest/bath/visitorCount"
+	}
 
-	cmd := exec.Command(
-		"/usr/bin/chromium",
-		"--headless=new",
-		"--no-sandbox",
-		"--disable-gpu",
-		"--disable-dev-shm-usage",
-		"--user-data-dir="+configDir,
-		"--dump-dom",
-		"--virtual-time-budget=20000",
-		"https://www.swm.de/baeder/auslastung",
-	)
-
-	output, err := cmd.Output()
+	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {
-		return fmt.Errorf("chromium failed: %w", err)
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("User-Agent", "swm-pool-scraper/1.0")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("API returned status %d", resp.StatusCode)
 	}
 
-	html := string(output)
-	fmt.Printf("Got HTML length: %d bytes\n", len(html))
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read API response: %w", err)
+	}
+	fmt.Printf("Got API response: %d bytes\n", len(body))
 
-	if len(html) < 1000 {
-		return fmt.Errorf("HTML too short: %d bytes", len(html))
+	var data apiResponse
+	if err := json.Unmarshal(body, &data); err != nil {
+		return fmt.Errorf("failed to parse JSON: %w", err)
+	}
+	if data.ReturnCode != "success" {
+		return fmt.Errorf("API return_code = %q", data.ReturnCode)
 	}
 
-	poolStats := extractPoolData(html)
+	// Walk all locations and their areas; pick the ones we track.
+	poolStats := make(map[string]int)
+
+	for _, loc := range data.Data {
+		for _, a := range loc.AreaList {
+		dbName, ok := areaToPool[a.AreaName]
+		if !ok {
+				continue
+			}
+			if a.CustomerAmountMax == 0 {
+				fmt.Printf("  Skipping %s: max capacity is 0\n", dbName)
+				continue
+			}
+			// DB stores free capacity: 100 = empty, 0 = completely full.
+			// Compute as 100 - filled_pct.
+			pct := int(math.Round((1.0 - float64(a.CustomerAmount)/float64(a.CustomerAmountMax)) * 100))
+			if pct < 0 {
+				pct = 0
+			}
+			if pct > 100 {
+				pct = 100
+			}
+			poolStats[dbName] = pct
+			fmt.Printf("  Found: %s -> %d%% (%d/%d)\n", dbName, pct, a.CustomerAmount, a.CustomerAmountMax)
+		}
+	}
+
 	fmt.Printf("Found %d pools\n", len(poolStats))
 
 	if len(poolStats) == 0 {
-		return fmt.Errorf("no pools found in HTML")
+		return fmt.Errorf("no pools found in API response")
 	}
 
-	// Explicitly store the current UTC timestamp. All timestamps in the database
-	// are UTC ("YYYY-MM-DD HH:MM:SS"). Timezone conversion (e.g. to Europe/Berlin)
-	// happens at read time in the API and aggregator.
+
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 
 	for name, utility := range poolStats {
@@ -138,269 +251,6 @@ func scrape() error {
 	}
 
 	return nil
-}
-
-// extractPoolData returns a map of pool name → utilization percentage (0–100).
-//
-// Parsing strategy (current, 2026-06+):
-//
-//   The SWM page renders each pool as a <li class="bath-capacity-item">
-//   element that contains BOTH the pool name (<h3 class="headline-s">)
-//   and its utilisation percentage (either a progress bar with
-//   style="width: XX%" or a "closed-msg" block).  We parse each <li>
-//   as an atomic unit — name, percentage, and closure status all
-//   come from the same element, so a closed pool can NEVER borrow its
-//   neighbour's number.
-//
-//   Legacy fallback: if no <li class="bath-capacity-item"> elements are
-//   found (pre-2026-05 page design), we fall back to searching for
-//   <h3 class="headline-s"> headings and the first following % value,
-//   bounded by the next heading.
-//
-// Normalization:
-// The SWM website reports 0% capacity remaining when certain pools are
-// closed (instead of 100% like most Hallenbäder).  The normalizePools set
-// maps which pool names use this inverted convention.  Pools NOT in the
-// set (e.g. Cosimawellenbad) are left as-is because their 0% readings
-// during operating hours can be genuine (pool at full capacity).
-func extractPoolData(html string) map[string]int {
-	poolStats := make(map[string]int)
-
-	poolsSection := extractPoolsSection(html)
-	if poolsSection == "" {
-		fmt.Println("Could not find pools section")
-		return poolStats
-	}
-
-	fmt.Printf("Pools section length: %d bytes\n", len(poolsSection))
-
-	// --- Parse <li class="bath-capacity-item"> elements (current design) ---
-	// Each <li> is a self-contained pool card: name + progress bar (or closure msg).
-	reItem := regexp.MustCompile(`<li class="bath-capacity-item">`)
-	itemLocs := reItem.FindAllStringIndex(poolsSection, -1)
-
-	if len(itemLocs) > 0 {
-		reHeadline := regexp.MustCompile(`class="headline-s">([^<]+)</h3>`)
-		rePctBar := regexp.MustCompile(`style="width:\s*(\d+)\s*%`)
-		reClosed := regexp.MustCompile(`closed-msg`)
-
-		matched := 0
-		skipped := 0
-		for i, loc := range itemLocs {
-			// Section from this <li> to the next (or end of pools section)
-			start := loc[0]
-			end := len(poolsSection)
-			if i+1 < len(itemLocs) {
-				end = itemLocs[i+1][0]
-			}
-			block := poolsSection[start:end]
-
-			// Extract pool name from the first <h3> in this block
-			nameMatch := reHeadline.FindStringSubmatch(block)
-			if nameMatch == nil {
-				continue
-			}
-			name := strings.TrimSpace(nameMatch[1])
-
-			// Skip closure notices — these blocks have no progress bar
-			if isClosureNotice(name) || reClosed.MatchString(block) {
-				fmt.Printf("  Skipping closed: %q\n", name)
-				skipped++
-				continue
-			}
-
-			// Extract percentage from the progress bar style attribute
-			pctMatch := rePctBar.FindStringSubmatch(block)
-			if pctMatch == nil {
-				fmt.Printf("  No %% for: %s (closed / no data)\n", name)
-				continue
-			}
-			pct, err := strconv.Atoi(pctMatch[1])
-			if err != nil || pct < 0 || pct > 100 {
-				continue
-			}
-
-			poolStats[name] = pct
-			fmt.Printf("  Found: %s -> %d%%\n", name, pct)
-			matched++
-		}
-		fmt.Printf("  Parsed %d pool cards (%d with %%, %d closed)\n",
-			len(itemLocs), matched, skipped)
-	}
-
-	// --- Legacy fallback: headline-s headings with bounded search ---
-	if len(poolStats) == 0 {
-		fmt.Println("  No bath-capacity-item elements — trying legacy fallback")
-		type headline struct {
-			name  string
-			start int
-		}
-		var headlines []headline
-		reHeadline := regexp.MustCompile(`class="headline-s">([^<]+)</h3>`)
-		for _, m := range reHeadline.FindAllStringSubmatchIndex(poolsSection, -1) {
-			if len(m) >= 4 {
-				if name := strings.TrimSpace(poolsSection[m[2]:m[3]]); name != "" {
-					headlines = append(headlines, headline{name, m[1]})
-				}
-			}
-		}
-		if len(headlines) == 0 {
-			snippet := poolsSection
-			if len(snippet) > 800 {
-				snippet = snippet[:800]
-			}
-			fmt.Printf("  No pool name candidates found. Snippet:\n%s\n", snippet)
-			return poolStats
-		}
-		rePercent := regexp.MustCompile(`(\d+)\s*%`)
-		nextStart := func(i int) int {
-			if i+1 < len(headlines) {
-				return headlines[i+1].start
-			}
-			return len(poolsSection)
-		}
-		skipped := 0
-		matched := 0
-		for i, h := range headlines {
-			if isClosureNotice(h.name) {
-				fmt.Printf("  Skipping closure notice: %q\n", h.name)
-				skipped++
-				continue
-			}
-			searchArea := poolsSection[h.start:nextStart(i)]
-			found := false
-			for _, pctMatch := range rePercent.FindAllStringSubmatch(searchArea, 1) {
-				if len(pctMatch) >= 2 {
-					pct, err := strconv.Atoi(pctMatch[1])
-					if err == nil && pct >= 0 && pct <= 100 {
-						poolStats[h.name] = pct
-						fmt.Printf("  Found: %s -> %d%%\n", h.name, pct)
-						found = true
-						matched++
-						break
-					}
-				}
-			}
-			if !found {
-				fmt.Printf("  No %% for: %s (closed / no data)\n", h.name)
-			}
-		}
-		fmt.Printf("  Legacy parse: %d names (%d with %%, %d closure notices)\n",
-			len(headlines), matched, skipped)
-	}
-
-	// Pools whose scraped 0% capacity remaining means "closed" and should
-	// be stored as 100 (= nobody there).  The SWM website uses this inverted
-	// convention for all outdoor pools (Freibäder) and — since the 2026-05
-	// redesign — also for some indoor pools (currently only Michaelibad).
-	//
-	// Hallenbäder like Cosimawellenbad are NOT in this set: their 0%
-	// readings during operating hours can be genuine (pool at full
-	// capacity on a hot day).  If another pool switches to the inverted
-	// convention, add its name here.
-	normalizePools := map[string]bool{
-		"Dantebad":                   true,
-		"Freibad West":               true,
-		"Michaeli-Freibad":           true,
-		"Michaelibad":                true,
-		"Müller'sches Volksbad":      true,
-		"Naturbad Georgenschwaige":   true,
-		"Naturbad Maria Einsiedel":   true,
-		"Prinzregentenbad":           true,
-		"Schyrenbad":                 true,
-		"Südbad":                     true,
-		"Ungererbad":                 true,
-	}
-	for name, utility := range poolStats {
-		if utility == 0 && normalizePools[name] {
-			poolStats[name] = 100
-			fmt.Printf("  Normalized closed pool: %s 0%% → 100%%\n", name)
-		}
-	}
-
-	return poolStats
-}
-
-// isClosureNotice returns true when name looks like a closure/status message
-// rather than an actual swimming-pool name.  The SWM website renders these
-// headlines for pools that are temporarily out of service (renovation,
-// seasonal closure, etc.), e.g. "Geschlossen – in Revision".  Accepting
-// such strings as pool names would create phantom pool entries and
-// incorrectly assign another pool's utilisation percentage to them.
-func isClosureNotice(name string) bool {
-	lower := strings.ToLower(name)
-	for _, phrase := range []string{
-		"geschlossen",
-		"closed",
-		"ab sofort",
-		"in revision",
-		"instandhaltung",
-		"wartungsarbeit",
-		"revision",
-	} {
-		if strings.Contains(lower, phrase) {
-			return true
-		}
-	}
-	// If the name is extremely short and not a known pool, it's suspicious.
-	if len(strings.TrimSpace(name)) < 4 {
-		return true
-	}
-	return false
-}
-
-// extractPoolsSection returns the HTML spanning all swimming-pool sections,
-// stopping before the sauna section.  It tries several known section IDs so
-// that a future page rename degrades gracefully instead of silently returning
-// no data.
-//
-// Known page structures:
-//
-//	2026-05+  id="freibad"  (outdoor pools)
-//	          id="hallenbad" (indoor pools)
-//	          id="sauna"    (saunas — marks the end; excluded)
-//
-//	~2026-04  id="bad"      (all pools combined)
-//	          id="sauna"    (saunas — marks the end; excluded)
-func extractPoolsSection(html string) string {
-	// IDs that mark the start of a pools section (tried from left-most occurrence).
-	poolStartIDs := []string{"freibad", "hallenbad", "bad"}
-
-	reID := func(id string) *regexp.Regexp {
-		return regexp.MustCompile(`<div[^>]*\bid="` + regexp.QuoteMeta(id) + `"[^>]*>`)
-	}
-
-	// Find the earliest occurrence of any known pool-start section.
-	start := -1
-	foundID := ""
-	for _, id := range poolStartIDs {
-		loc := reID(id).FindStringIndex(html)
-		if loc != nil && (start == -1 || loc[0] < start) {
-			start = loc[0]
-			foundID = id
-		}
-	}
-
-	if start == -1 {
-		fmt.Println("Could not find any pool section (tried: freibad, hallenbad, bad)")
-		// Diagnostic: list every <div id="..."> seen, to speed up future debugging.
-		reDivID := regexp.MustCompile(`<div[^>]*\bid="([^"]+)"`)
-		for _, m := range reDivID.FindAllStringSubmatch(html, 40) {
-			fmt.Printf("  Saw div id=%q\n", m[1])
-		}
-		return ""
-	}
-
-	fmt.Printf("  Found pool section start: id=%q\n", foundID)
-	section := html[start:]
-
-	// Clip at the sauna section (we never want sauna entries).
-	if saunaLoc := reID("sauna").FindStringIndex(section); saunaLoc != nil {
-		section = section[:saunaLoc[0]]
-		fmt.Println("  Clipped section at id=\"sauna\"")
-	}
-
-	return section
 }
 
 func main() {

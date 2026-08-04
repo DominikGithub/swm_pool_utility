@@ -13,15 +13,11 @@ RUN CGO_ENABLED=1 GOOS=linux go build -o scraper
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    chromium \
-    chromium-sandbox \
     libsqlite3-0 \
     ca-certificates \
-    fonts-noto \
     cron \
     && rm -rf /var/lib/apt/lists/*
 
-ENV CHROME_BIN=/usr/bin/chromium
 COPY --from=builder /app/scraper /scraper
 
 RUN touch /var/log/scraper.log && \

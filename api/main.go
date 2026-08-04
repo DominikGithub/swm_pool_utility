@@ -483,6 +483,7 @@ func main() {
 	r := gin.Default()
 	r.Use(gin.Logger())
 
+	r.GET("/api/health", health)
 	r.GET("/api/pool-status", getPoolStatus)
 	r.GET("/api/pools", getPools)
 	r.GET("/api/history", getHistory)
