@@ -140,8 +140,10 @@ function formatTimestamp(isoString) {
 }
 
 function getPoolWithValue(pool) {
-  if (hoverData.value && hoverData.value[pool.name] !== undefined) {
-    return { ...pool, utility: hoverData.value[pool.name] }
+  if (hoverData.value) {
+    // A missing observation is unknown, not the pool's latest value. This
+    // avoids showing a stale daytime value while hovering a historical gap.
+    return { ...pool, utility: hoverData.value[pool.name] ?? null }
   }
   return pool
 }

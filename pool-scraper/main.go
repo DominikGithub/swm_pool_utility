@@ -24,6 +24,17 @@ var db *sql.DB
 // on the rare occasion a previously-unseen pool name appears.
 var poolIDs = map[string]int64{}
 
+var poolNameReplacer = strings.NewReplacer(
+	"\u2018", "'",
+	"\u2019", "'",
+)
+
+// canonicalPoolName keeps harmless typography changes on the SWM page from
+// creating separate database identities for the same pool.
+func canonicalPoolName(name string) string {
+	return poolNameReplacer.Replace(strings.TrimSpace(name))
+}
+
 func initDB() {
 	dbPath := os.Getenv("DB_PATH")
 	if dbPath == "" {
@@ -54,13 +65,14 @@ func loadPoolIDs() {
 		if err := rows.Scan(&id, &name); err != nil {
 			continue
 		}
-		poolIDs[name] = id
+		poolIDs[canonicalPoolName(name)] = id
 	}
 }
 
 // getOrCreatePoolID returns the pools.id for name, inserting a new row if this
 // is the first time the pool has been seen.
 func getOrCreatePoolID(name string) (int64, error) {
+	name = canonicalPoolName(name)
 	if id, ok := poolIDs[name]; ok {
 		return id, nil
 	}
@@ -75,6 +87,29 @@ func getOrCreatePoolID(name string) (int64, error) {
 	}
 	poolIDs[name] = id
 	return id, nil
+}
+
+// removeRecentLongTermClosureSamples removes closed observations from every
+// selectable history range (up to 30 days) once SWM marks a pool as undergoing
+// a long-term closure. Older history remains intact, and a normal percentage
+// reading recreates the pool on its first scrape after reopening.
+func removeRecentLongTermClosureSamples(name, now string) {
+	poolID, ok := poolIDs[canonicalPoolName(name)]
+	if !ok {
+		return
+	}
+
+	result, err := db.Exec(
+		"DELETE FROM track_pools WHERE pool_id = ? AND utility = 100 AND dtime >= datetime(?, '-30 days')",
+		poolID, now,
+	)
+	if err != nil {
+		log.Printf("failed to remove long-term closure samples for %s: %v", name, err)
+		return
+	}
+	if removed, err := result.RowsAffected(); err == nil && removed > 0 {
+		fmt.Printf("Removed %d recent long-term closure samples for %s\n", removed, name)
+	}
 }
 
 func scrape() error {
@@ -108,7 +143,7 @@ func scrape() error {
 		return fmt.Errorf("HTML too short: %d bytes", len(html))
 	}
 
-	poolStats := extractPoolData(html)
+	poolStats, unavailablePools := extractPoolData(html)
 	fmt.Printf("Found %d pools\n", len(poolStats))
 
 	if len(poolStats) == 0 {
@@ -119,6 +154,9 @@ func scrape() error {
 	// are UTC ("YYYY-MM-DD HH:MM:SS"). Timezone conversion (e.g. to Europe/Berlin)
 	// happens at read time in the API and aggregator.
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	for _, name := range unavailablePools {
+		removeRecentLongTermClosureSamples(name, now)
+	}
 
 	for name, utility := range poolStats {
 		poolID, err := getOrCreatePoolID(name)
@@ -140,22 +178,24 @@ func scrape() error {
 	return nil
 }
 
-// extractPoolData returns a map of pool name → utilization percentage (0–100).
+// extractPoolData returns remaining capacity by pool plus named pools that are
+// unavailable due to long-term closures. An ordinary closed pool is stored as
+// 100, which the dashboard renders as 0% utilization.
 //
 // Parsing strategy (current, 2026-06+):
 //
-//   The SWM page renders each pool as a <li class="bath-capacity-item">
-//   element that contains BOTH the pool name (<h3 class="headline-s">)
-//   and its utilisation percentage (either a progress bar with
-//   style="width: XX%" or a "closed-msg" block).  We parse each <li>
-//   as an atomic unit — name, percentage, and closure status all
-//   come from the same element, so a closed pool can NEVER borrow its
-//   neighbour's number.
+//	The SWM page renders each pool as a <li class="bath-capacity-item">
+//	element that contains BOTH the pool name (<h3 class="headline-s">)
+//	and its utilisation percentage (either a progress bar with
+//	style="width: XX%" or a "closed-msg" block).  We parse each <li>
+//	as an atomic unit — name, percentage, and closure status all
+//	come from the same element, so a closed pool can NEVER borrow its
+//	neighbour's number.
 //
-//   Legacy fallback: if no <li class="bath-capacity-item"> elements are
-//   found (pre-2026-05 page design), we fall back to searching for
-//   <h3 class="headline-s"> headings and the first following % value,
-//   bounded by the next heading.
+//	Legacy fallback: if no <li class="bath-capacity-item"> elements are
+//	found (pre-2026-05 page design), we fall back to searching for
+//	<h3 class="headline-s"> headings and the first following % value,
+//	bounded by the next heading.
 //
 // Normalization:
 // The SWM website reports 0% capacity remaining when certain pools are
@@ -163,13 +203,14 @@ func scrape() error {
 // maps which pool names use this inverted convention.  Pools NOT in the
 // set (e.g. Cosimawellenbad) are left as-is because their 0% readings
 // during operating hours can be genuine (pool at full capacity).
-func extractPoolData(html string) map[string]int {
+func extractPoolData(html string) (map[string]int, []string) {
 	poolStats := make(map[string]int)
+	unavailablePools := make([]string, 0)
 
 	poolsSection := extractPoolsSection(html)
 	if poolsSection == "" {
 		fmt.Println("Could not find pools section")
-		return poolStats
+		return poolStats, unavailablePools
 	}
 
 	fmt.Printf("Pools section length: %d bytes\n", len(poolsSection))
@@ -202,9 +243,23 @@ func extractPoolData(html string) map[string]int {
 			}
 			name := strings.TrimSpace(nameMatch[1])
 
-			// Skip closure notices — these blocks have no progress bar
-			if isClosureNotice(name) || reClosed.MatchString(block) {
-				fmt.Printf("  Skipping closed: %q\n", name)
+			// Status headings are not pool names. A named pool with a closed-msg,
+			// however, is a valid zero-utilization observation and must be stored.
+			if isClosureNotice(name) {
+				fmt.Printf("  Skipping closure notice: %q\n", name)
+				skipped++
+				continue
+			}
+			name = canonicalPoolName(name)
+			if reClosed.MatchString(block) {
+				if isLongTermClosure(block) {
+					unavailablePools = append(unavailablePools, name)
+					fmt.Printf("  Unavailable due to long-term closure: %s\n", name)
+					skipped++
+					continue
+				}
+				poolStats[name] = 100
+				fmt.Printf("  Found closed: %s -> 100%%\n", name)
 				skipped++
 				continue
 			}
@@ -250,7 +305,7 @@ func extractPoolData(html string) map[string]int {
 				snippet = snippet[:800]
 			}
 			fmt.Printf("  No pool name candidates found. Snippet:\n%s\n", snippet)
-			return poolStats
+			return poolStats, unavailablePools
 		}
 		rePercent := regexp.MustCompile(`(\d+)\s*%`)
 		nextStart := func(i int) int {
@@ -267,14 +322,15 @@ func extractPoolData(html string) map[string]int {
 				skipped++
 				continue
 			}
+			name := canonicalPoolName(h.name)
 			searchArea := poolsSection[h.start:nextStart(i)]
 			found := false
 			for _, pctMatch := range rePercent.FindAllStringSubmatch(searchArea, 1) {
 				if len(pctMatch) >= 2 {
 					pct, err := strconv.Atoi(pctMatch[1])
 					if err == nil && pct >= 0 && pct <= 100 {
-						poolStats[h.name] = pct
-						fmt.Printf("  Found: %s -> %d%%\n", h.name, pct)
+						poolStats[name] = pct
+						fmt.Printf("  Found: %s -> %d%%\n", name, pct)
 						found = true
 						matched++
 						break
@@ -299,17 +355,17 @@ func extractPoolData(html string) map[string]int {
 	// capacity on a hot day).  If another pool switches to the inverted
 	// convention, add its name here.
 	normalizePools := map[string]bool{
-		"Dantebad":                   true,
-		"Freibad West":               true,
-		"Michaeli-Freibad":           true,
-		"Michaelibad":                true,
-		"Müller'sches Volksbad":      true,
-		"Naturbad Georgenschwaige":   true,
-		"Naturbad Maria Einsiedel":   true,
-		"Prinzregentenbad":           true,
-		"Schyrenbad":                 true,
-		"Südbad":                     true,
-		"Ungererbad":                 true,
+		"Dantebad":                 true,
+		"Freibad West":             true,
+		"Michaeli-Freibad":         true,
+		"Michaelibad":              true,
+		"Müller'sches Volksbad":    true,
+		"Naturbad Georgenschwaige": true,
+		"Naturbad Maria Einsiedel": true,
+		"Prinzregentenbad":         true,
+		"Schyrenbad":               true,
+		"Südbad":                   true,
+		"Ungererbad":               true,
 	}
 	for name, utility := range poolStats {
 		if utility == 0 && normalizePools[name] {
@@ -318,7 +374,29 @@ func extractPoolData(html string) map[string]int {
 		}
 	}
 
-	return poolStats
+	return poolStats, unavailablePools
+}
+
+// isLongTermClosure identifies renovation and maintenance notices inside a
+// named pool card. Unlike normal opening-hours closures, these pools should be
+// unavailable until SWM publishes a regular capacity percentage again.
+func isLongTermClosure(block string) bool {
+	lower := strings.ToLower(block)
+	for _, phrase := range []string{
+		"sanierungsarbeit",
+		"sanierung",
+		"renovierung",
+		"modernisierung",
+		"in revision",
+		"instandhaltung",
+		"wartungsarbeit",
+		"umbau",
+	} {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 // isClosureNotice returns true when name looks like a closure/status message
