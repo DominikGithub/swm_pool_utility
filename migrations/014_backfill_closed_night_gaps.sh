@@ -24,9 +24,9 @@
 # It is idempotent: rerunning with --apply inserts only still-missing rows.
 #
 # Usage:
+#   bash migrations/014_backfill_closed_night_gaps.sh
 #   bash migrations/014_backfill_closed_night_gaps.sh --dry-run
-#   bash migrations/014_backfill_closed_night_gaps.sh --apply
-#   bash migrations/014_backfill_closed_night_gaps.sh --apply --days 14
+#   bash migrations/014_backfill_closed_night_gaps.sh --days 14
 # =============================================================================
 set -euo pipefail
 
@@ -36,16 +36,12 @@ SCHEDULE_FILE="$PROJECT_DIR/frontend/src/data/pool-opening-hours.json"
 cd "$PROJECT_DIR"
 
 DAYS=7
-APPLY=false
+APPLY=true
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run)
       APPLY=false
-      shift
-      ;;
-    --apply)
-      APPLY=true
       shift
       ;;
     --days)
@@ -58,7 +54,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "Unknown argument: $1" >&2
-      echo "Usage: bash migrations/014_backfill_closed_night_gaps.sh [--dry-run|--apply] [--days N]" >&2
+      echo "Usage: bash migrations/014_backfill_closed_night_gaps.sh [--dry-run] [--days N]" >&2
       exit 2
       ;;
   esac
