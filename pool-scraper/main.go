@@ -24,6 +24,126 @@ var db *sql.DB
 // on the rare occasion a previously-unseen pool name appears.
 var poolIDs = map[string]int64{}
 
+// minPoolCount is the fewest pools a valid scrape must contain before data is
+// written.  SWM runs 9 year-round indoor pools (plus up to 8 seasonal outdoor
+// pools), so a scrape with fewer readings is almost certainly a partial render
+// (anti-bot wall, renamed section, truncated DOM).  Override via MIN_POOLS when
+// the page legitimately shrinks (e.g. several simultaneous long-term closures).
+var minPoolCount = 6
+
+// spikeFloor is the highest previous reading from which a sudden drop to 0%
+// capacity remaining is still believable.  SWM's widget intermittently serves
+// 0% for pools that are plainly not full (see validatePoolStats); when only
+// SOME pools are affected the all-zero guard cannot see it, so every 0 is also
+// checked against that pool's own recent history.  A pool sitting above 60%
+// free capacity cannot fill completely inside one 10-minute interval, so such
+// a 0 is discarded.  A genuine fill-up is approached gradually
+// (93 → … → 20 → 5 → 1 → 0) and its 0 is kept — hence a threshold well above
+// the single-digit readings that precede real full-capacity events.
+// Override via SPIKE_FLOOR; set to 0 to disable the guard.
+var spikeFloor = 60
+
+// spikeLookbackMinutes bounds how stale the comparison reading may be.  After a
+// scraper outage the last stored value says nothing about the pool's present
+// state, so the guard stands down rather than discard good data.
+const spikeLookbackMinutes = 60
+
+// dbTimeLayout is the UTC format every dtime column uses.
+const dbTimeLayout = "2006-01-02 15:04:05"
+
+// --- false-empty correction -------------------------------------------------
+//
+// The same SWM glitch that serves a raw 0% also reaches pools whose 0 means
+// "closed": normalizePoolStats maps it to 100, so instead of a visible zero the
+// history gets a false "pool empty" reading.  dropImplausibleZeros cannot judge
+// it, because at write time a 100 is genuinely ambiguous — closing time and a
+// glitch look identical.
+//
+// What separates them is what happens NEXT: a real closure persists until the
+// pool reopens hours later, whereas a glitch recovers within a sample or two.
+// So the call is deferred — once the pool reports a busy value again, a short
+// island of 100s bracketed by busy readings is recognised as the glitch it was
+// and removed.  The correction therefore lands one interval (~10 min) late,
+// which is the price of not having to guess in the moment.
+//
+// Observed examples (all bracketed by clearly-busy readings):
+//
+//	Müller'sches Volksbad  2026-10-05 10:10   76 → 100 → 62
+//	Südbad                 2026-05-03 14:50    2 → 100 →  2   (packed, "empty", packed)
+//
+// This applies to every pool, not just the inverted-convention ones: a lone
+// "closed" between two busy readings is implausible either way, and pools
+// outside the set show the same signature (Bad Giesing-Harlaching, Nordbad,
+// Cosimawellenbad).
+
+// falseEmptyBusyMax is the highest reading that still counts as "clearly in
+// use" when bracketing a suspect 100.  At 80 the pool has at least a fifth of
+// its capacity taken, and it neither empties completely for ten minutes nor
+// refills straight after.
+//
+// The threshold is deliberately not higher.  Readings in the 80–90 band (only
+// 10–20% utilized) are the one place where a brief genuine closure is an
+// equally good explanation, and raising the bar to 90 would have swept up 87
+// further historical samples on that guess — most of them Bad Giesing-Harlaching,
+// which legitimately shows a closed notice often.  Override via
+// FALSE_EMPTY_BUSY_MAX; set to 0 to disable the correction entirely.
+var falseEmptyBusyMax = 80
+
+// falseEmptyMaxRun caps how long an island may be before it is taken at face
+// value.  Two samples is 20 minutes; a genuine closure lasts hours.
+const falseEmptyMaxRun = 2
+
+// falseEmptyMaxStepMinutes keeps the island contiguous.  A larger step means a
+// scraper gap sits between the samples, so they are not consecutive readings
+// and nothing can be concluded from them.
+const falseEmptyMaxStepMinutes = 20
+
+func init() {
+	if v := os.Getenv("MIN_POOLS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			minPoolCount = n
+			log.Printf("MIN_POOLS override: %d", n)
+		}
+	}
+	if v := os.Getenv("SPIKE_FLOOR"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 100 {
+			spikeFloor = n
+			log.Printf("SPIKE_FLOOR override: %d", n)
+		}
+	}
+	if v := os.Getenv("FALSE_EMPTY_BUSY_MAX"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n < 100 {
+			falseEmptyBusyMax = n
+			log.Printf("FALSE_EMPTY_BUSY_MAX override: %d", n)
+		}
+	}
+}
+
+// invertedConventionPools lists the pools that report 0% capacity remaining
+// when CLOSED instead of 100%.  Outdoor pools (Freibäder) all use this
+// convention and — since the 2026-05 redesign — some indoor pools too
+// (Michaelibad, Südbad, Müller'sches Volksbad).  Two call sites share the set:
+// normalizePoolStats maps their 0 → 100, and dropImplausibleZeros skips them
+// because for these pools a raw 0 is ambiguous (closed vs. glitch) and the
+// mapping already renders it harmlessly as 0% utilization.
+//
+// Hallenbäder like Cosimawellenbad are deliberately absent: their 0% during
+// operating hours can be genuine (pool at full capacity), which is exactly why
+// they are the pools a site-wide 0% glitch leaves visible in history.
+var invertedConventionPools = map[string]bool{
+	"Dantebad":                 true,
+	"Freibad West":             true,
+	"Michaeli-Freibad":         true,
+	"Michaelibad":              true,
+	"Müller'sches Volksbad":    true,
+	"Naturbad Georgenschwaige": true,
+	"Naturbad Maria Einsiedel": true,
+	"Prinzregentenbad":         true,
+	"Schyrenbad":               true,
+	"Südbad":                   true,
+	"Ungererbad":               true,
+}
+
 var poolNameReplacer = strings.NewReplacer(
 	"\u2018", "'",
 	"\u2019", "'",
@@ -146,14 +266,22 @@ func scrape() error {
 	poolStats, unavailablePools := extractPoolData(html)
 	fmt.Printf("Found %d pools\n", len(poolStats))
 
-	if len(poolStats) == 0 {
-		return fmt.Errorf("no pools found in HTML")
+	if err := validatePoolStats(poolStats); err != nil {
+		return fmt.Errorf("sanity check failed: %w", err)
 	}
 
 	// Explicitly store the current UTC timestamp. All timestamps in the database
 	// are UTC ("YYYY-MM-DD HH:MM:SS"). Timezone conversion (e.g. to Europe/Berlin)
 	// happens at read time in the API and aggregator.
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+
+	// Both zero-guards inspect the RAW scrape: validatePoolStats rejects an
+	// all-zero page outright, dropImplausibleZeros removes the partial case
+	// pool-by-pool, and only afterwards are the 0 → 100 mappings applied.
+	if dropped := dropImplausibleZeros(poolStats, now); dropped > 0 {
+		fmt.Printf("Discarded %d implausible 0%% reading(s)\n", dropped)
+	}
+	normalizePoolStats(poolStats)
 	for _, name := range unavailablePools {
 		removeRecentLongTermClosureSamples(name, now)
 	}
@@ -164,15 +292,26 @@ func scrape() error {
 			log.Printf("failed to resolve pool ID for %s: %v", name, err)
 			continue
 		}
-		_, err = db.Exec(
-			"INSERT INTO track_pools (pool_id, dtime, utility) VALUES (?, ?, ?)",
+		result, err := db.Exec(
+			"INSERT INTO track_pools (pool_id, dtime, utility) VALUES (?, ?, ?) "+
+				"ON CONFLICT(pool_id, dtime) DO NOTHING",
 			poolID, now, utility,
 		)
 		if err != nil {
 			log.Printf("failed to insert %s: %v", name, err)
-		} else {
-			fmt.Printf("Logged: %s -> %d%%\n", name, utility)
+			continue
 		}
+		if affected, _ := result.RowsAffected(); affected == 0 {
+			log.Printf("skipped duplicate %s at %s (row already present)", name, now)
+			continue
+		}
+		fmt.Printf("Logged: %s -> %d%%\n", name, utility)
+	}
+
+	// Judged only now that this scrape is in: a pool reporting a busy value
+	// again proves any short "closed" island just before it was a glitch.
+	if corrected := correctFalseEmptySamples(poolStats, now); corrected > 0 {
+		fmt.Printf("Removed %d false-empty sample(s) from the preceding interval(s)\n", corrected)
 	}
 
 	return nil
@@ -197,12 +336,10 @@ func scrape() error {
 //	<h3 class="headline-s"> headings and the first following % value,
 //	bounded by the next heading.
 //
-// Normalization:
-// The SWM website reports 0% capacity remaining when certain pools are
-// closed (instead of 100% like most Hallenbäder).  The normalizePools set
-// maps which pool names use this inverted convention.  Pools NOT in the
-// set (e.g. Cosimawellenbad) are left as-is because their 0% readings
-// during operating hours can be genuine (pool at full capacity).
+// Values are returned RAW: a closed pool is stored as 100 — or, for pools
+// using SWM's inverted convention, as 0 — and the caller applies
+// normalizePoolStats after validatePoolStats has inspected the un-mapped
+// scrape (so a site-wide 0% glitch stays visible to the guard).
 func extractPoolData(html string) (map[string]int, []string) {
 	poolStats := make(map[string]int)
 	unavailablePools := make([]string, 0)
@@ -345,36 +482,210 @@ func extractPoolData(html string) (map[string]int, []string) {
 			len(headlines), matched, skipped)
 	}
 
-	// Pools whose scraped 0% capacity remaining means "closed" and should
-	// be stored as 100 (= nobody there).  The SWM website uses this inverted
-	// convention for all outdoor pools (Freibäder) and — since the 2026-05
-	// redesign — also for some indoor pools (currently only Michaelibad).
-	//
-	// Hallenbäder like Cosimawellenbad are NOT in this set: their 0%
-	// readings during operating hours can be genuine (pool at full
-	// capacity on a hot day).  If another pool switches to the inverted
-	// convention, add its name here.
-	normalizePools := map[string]bool{
-		"Dantebad":                 true,
-		"Freibad West":             true,
-		"Michaeli-Freibad":         true,
-		"Michaelibad":              true,
-		"Müller'sches Volksbad":    true,
-		"Naturbad Georgenschwaige": true,
-		"Naturbad Maria Einsiedel": true,
-		"Prinzregentenbad":         true,
-		"Schyrenbad":               true,
-		"Südbad":                   true,
-		"Ungererbad":               true,
+	return poolStats, unavailablePools
+}
+
+// validatePoolStats rejects scrapes that are almost certainly wrong before
+// they reach the database, so a broken or half-rendered page cannot poison
+// history.  It runs on the RAW values (before normalizePoolStats): the raw 0%
+// signal is unambiguous, whereas the inverted-convention mapping below would
+// otherwise hide it.  Two failure modes are guarded:
+//
+//  1. Too few pools — a partial load (anti-bot wall, renamed section, truncated
+//     DOM dump) yields only a handful of readings.
+//  2. Every pool at 0% — the documented site-wide glitch (Apr 2026).  A
+//     genuine "all pools at full capacity in the same instant" never happens.
+//
+// An all-100 scrape is deliberately accepted: that is the normal overnight
+// state when every pool is closed, and the honest reading for a full-site
+// closure.
+func validatePoolStats(poolStats map[string]int) error {
+	if len(poolStats) == 0 {
+		return fmt.Errorf("no pools found in HTML")
 	}
+	if len(poolStats) < minPoolCount {
+		return fmt.Errorf("only %d pools found (minimum %d) — page likely partial or broken", len(poolStats), minPoolCount)
+	}
+	for _, utility := range poolStats {
+		if utility != 0 {
+			return nil
+		}
+	}
+	return fmt.Errorf("all %d pools report 0%% capacity remaining — site-wide glitch, discarding", len(poolStats))
+}
+
+// normalizePoolStats applies the SWM "inverted convention": certain pools
+// report 0% capacity remaining when closed instead of 100%.  Stored as 100
+// they render as 0% utilization, matching the Hallenbad convention.  This runs
+// AFTER validatePoolStats so the guard sees the un-mapped scrape.
+//
+// Outdoor pools (Freibäder) all use the inverted convention and — since the
+// 2026-05 redesign — some indoor pools too (Michaelibad, Südbad, Müller'sches
+// Volksbad).  Hallenbäder like Cosimawellenbad are NOT in the set: their 0%
+// during operating hours can be genuine (pool at full capacity).
+func normalizePoolStats(poolStats map[string]int) {
 	for name, utility := range poolStats {
-		if utility == 0 && normalizePools[name] {
+		if utility == 0 && invertedConventionPools[name] {
 			poolStats[name] = 100
 			fmt.Printf("  Normalized closed pool: %s 0%% → 100%%\n", name)
 		}
 	}
+}
 
-	return poolStats, unavailablePools
+// dropImplausibleZeros removes 0% readings that this pool cannot physically
+// have reached since its previous sample, and returns how many it discarded.
+//
+// It complements validatePoolStats: that guard only fires when EVERY pool
+// reads 0, but SWM's glitch is frequently partial (observed Oct 2026: 11 of 30
+// affected scrapes had only some pools at 0).  A partial glitch therefore
+// reaches history as a one-sample cliff from ~93% straight to 0% and back,
+// which is what makes the dashboard graphs spiky and drags the daily averages
+// and ML training targets down.
+//
+// Only pools outside invertedConventionPools are examined — for the others a
+// raw 0 legitimately means "closed" and normalizePoolStats maps it to 100.
+//
+// A discarded reading is simply not written, leaving a single-interval gap.
+// That is the honest representation: the site did not tell us the real value.
+// Charts bridge one missing 10-minute point invisibly, whereas a 0 would be
+// read as "completely full".  Because nothing is stored, the comparison value
+// for the next scrape stays the pre-glitch reading, so a glitch lasting half an
+// hour is rejected for its whole duration rather than only on its first sample.
+func dropImplausibleZeros(poolStats map[string]int, now string) int {
+	if spikeFloor <= 0 {
+		return 0
+	}
+	dropped := 0
+	for name, utility := range poolStats {
+		if utility != 0 || invertedConventionPools[name] {
+			continue
+		}
+		poolID, ok := poolIDs[canonicalPoolName(name)]
+		if !ok {
+			continue // first time we have seen this pool: no history to judge against
+		}
+		prev, ok := lastRecentUtility(poolID, now)
+		if !ok || prev <= spikeFloor {
+			continue // no recent reading, or 0 was approached gradually — believable
+		}
+		delete(poolStats, name)
+		dropped++
+		log.Printf("discarded implausible 0%% for %s (previous reading %d%% within %dmin) — partial site-wide glitch",
+			name, prev, spikeLookbackMinutes)
+	}
+	return dropped
+}
+
+// lastRecentUtility returns the pool's most recent reading strictly before now
+// and no older than spikeLookbackMinutes, reporting false when there is none.
+func lastRecentUtility(poolID int64, now string) (int, bool) {
+	var utility int
+	err := db.QueryRow(
+		"SELECT utility FROM track_pools WHERE pool_id = ? AND dtime < ? "+
+			"AND dtime >= datetime(?, ?) ORDER BY dtime DESC LIMIT 1",
+		poolID, now, now, fmt.Sprintf("-%d minutes", spikeLookbackMinutes),
+	).Scan(&utility)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("failed to read previous utility for pool %d: %v", poolID, err)
+		}
+		return 0, false
+	}
+	return utility, true
+}
+
+// correctFalseEmptySamples re-examines the samples just before this scrape and
+// removes a short island of "closed" (100) readings that the pool evidently did
+// not have, returning how many rows it deleted.  See the false-empty notes
+// above for why this can only be decided in hindsight.
+//
+// Deleting rather than rewriting keeps the table free of invented observations:
+// the site never reported a usable value for that interval, and one missing
+// ten-minute point is bridged invisibly by the charts, whereas a false "empty"
+// drags the averages down and teaches the predictor that the pool emptied.
+func correctFalseEmptySamples(poolStats map[string]int, now string) int {
+	if falseEmptyBusyMax <= 0 {
+		return 0
+	}
+	nowT, err := time.Parse(dbTimeLayout, now)
+	if err != nil {
+		return 0
+	}
+
+	corrected := 0
+	for name, utility := range poolStats {
+		// Only a pool that is clearly in use again proves the island was wrong.
+		if utility > falseEmptyBusyMax {
+			continue
+		}
+		poolID, ok := poolIDs[canonicalPoolName(name)]
+		if !ok {
+			continue
+		}
+		island := falseEmptyIslandIDs(poolID, now, nowT)
+		for _, id := range island {
+			if _, err := db.Exec("DELETE FROM track_pools WHERE id = ?", id); err != nil {
+				log.Printf("failed to remove false-empty sample %d for %s: %v", id, name, err)
+				continue
+			}
+			corrected++
+		}
+		if len(island) > 0 {
+			log.Printf("removed %d false-empty sample(s) for %s (pool busy again at %d%% capacity remaining)",
+				len(island), name, utility)
+		}
+	}
+	return corrected
+}
+
+// falseEmptyIslandIDs returns the ids of a contiguous run of 100s immediately
+// preceding now, but only when that run is short AND the reading just before it
+// shows the pool clearly in use.  Anything else — a long run, a non-contiguous
+// one, or a run reaching back to another closed reading (the normal overnight
+// case, where the pool reopens after hours at 100) — yields nothing.
+func falseEmptyIslandIDs(poolID int64, now string, nowT time.Time) []int64 {
+	rows, err := db.Query(
+		"SELECT id, dtime, utility FROM track_pools WHERE pool_id = ? AND dtime < ? "+
+			"ORDER BY dtime DESC LIMIT ?",
+		poolID, now, falseEmptyMaxRun+1,
+	)
+	if err != nil {
+		log.Printf("failed to inspect recent samples for pool %d: %v", poolID, err)
+		return nil
+	}
+	defer rows.Close()
+
+	var island []int64
+	follower := nowT // timestamp of the sample after the one being examined
+
+	for rows.Next() {
+		var id int64
+		var at time.Time // go-sqlite3 parses DATETIME columns into time.Time (UTC)
+		var utility int
+		if err := rows.Scan(&id, &at, &utility); err != nil {
+			log.Printf("failed to scan recent sample for pool %d: %v", poolID, err)
+			return nil
+		}
+		if follower.Sub(at) > falseEmptyMaxStepMinutes*time.Minute {
+			return nil // a gap sits here: these are not consecutive readings
+		}
+
+		if utility == 100 {
+			if len(island) >= falseEmptyMaxRun {
+				return nil // long enough to be a real closure
+			}
+			island = append(island, id)
+			follower = at
+			continue
+		}
+
+		// First non-closed reading below the island decides it.
+		if len(island) > 0 && utility <= falseEmptyBusyMax {
+			return island
+		}
+		return nil
+	}
+	return nil // ran out of history before the bracket was confirmed
 }
 
 // isLongTermClosure identifies renovation and maintenance notices inside a

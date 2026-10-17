@@ -16,6 +16,7 @@ services:
              sqlite3 /data/swm_pool_utility.db 'CREATE TABLE IF NOT EXISTS daily_avg_cache(id INTEGER PRIMARY KEY AUTOINCREMENT, pool_id INTEGER NOT NULL REFERENCES pools(id), slot_index INT NOT NULL, mean_utilization REAL NOT NULL, std_dev REAL NOT NULL, sample_count INT NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, UNIQUE(pool_id, slot_index));' &&
              sqlite3 /data/swm_pool_utility.db 'CREATE INDEX IF NOT EXISTS idx_track_pools_pool_id_dtime ON track_pools(pool_id, dtime, utility);' &&
              sqlite3 /data/swm_pool_utility.db 'CREATE INDEX IF NOT EXISTS idx_track_pools_dtime ON track_pools(dtime);' &&
+             sqlite3 /data/swm_pool_utility.db 'CREATE UNIQUE INDEX IF NOT EXISTS idx_track_pools_pool_dtime ON track_pools(pool_id, dtime);' &&
              sqlite3 /data/swm_pool_utility.db 'CREATE INDEX IF NOT EXISTS idx_weather_dtime ON weather(dtime);' &&
              sqlite3 /data/swm_pool_utility.db 'CREATE TABLE IF NOT EXISTS weather_forecast(id INTEGER PRIMARY KEY AUTOINCREMENT, dtime DATETIME NOT NULL, temperature REAL, wind_speed REAL, precipitation REAL, cloud_cover INT, weather_code INT, weather_type_id INTEGER NOT NULL REFERENCES weather_types(id), fetched_at DATETIME);' &&
              sqlite3 /data/swm_pool_utility.db 'CREATE UNIQUE INDEX IF NOT EXISTS idx_weather_forecast_dtime ON weather_forecast(dtime);' &&

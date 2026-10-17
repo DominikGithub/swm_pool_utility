@@ -27,6 +27,21 @@ type DataPoint struct {
 	Utility   int    `json:"utility"`
 }
 
+// glitchSpikeFloor and glitchLookback mirror pool-scraper's dropImplausibleZeros.
+// SWM's capacity widget intermittently serves 0% for pools that are plainly not
+// full; the scraper now discards those at write time, but this read-side guard
+// keeps a glitch that predates the fix — or one that arrives through any other
+// path — from drawing a 100-point cliff in the dashboard graphs.
+//
+// A 0% reading is dropped only when the pool's previous sample was above the
+// floor and recent enough to be comparable.  A gradual fill-up
+// (93 → … → 20 → 5 → 1 → 0) keeps its 0, because that is a real
+// full-capacity event.
+const (
+	glitchSpikeFloor = 60
+	glitchLookback   = time.Hour
+)
+
 type WeatherPoint struct {
 	Timestamp     string  `json:"timestamp"`
 	Temperature   float64 `json:"temperature"`
@@ -91,16 +106,41 @@ func getHistory(c *gin.Context) {
 	defer rows.Close()
 
 	data := make([]DataPoint, 0)
+
+	// Last reading kept per pool, used to recognise an implausible 0%.  Rows
+	// arrive in dtime order, so per pool they are already chronological.  A
+	// dropped sample deliberately does NOT update this state: during a glitch
+	// lasting several intervals every 0 is still compared against the last
+	// believable reading.  Should such a run outlast glitchLookback the guard
+	// stands down, since by then a sustained 0 may well be real.
+	lastKept := map[string]int{}
+	lastKeptAt := map[string]time.Time{}
+	glitches := 0
+
 	for rows.Next() {
 		var d DataPoint
 		var dtime time.Time // go-sqlite3 parses DATETIME columns into time.Time (UTC)
 		if err := rows.Scan(&d.Name, &dtime, &d.Utility); err != nil {
 			continue
 		}
+		if d.Utility == 0 {
+			// A 0 at the very start of the requested window has no predecessor
+			// to judge it by and is passed through unchanged.
+			if prev, ok := lastKept[d.Name]; ok && prev > glitchSpikeFloor &&
+				dtime.Sub(lastKeptAt[d.Name]) <= glitchLookback {
+				glitches++
+				continue
+			}
+		}
+		lastKept[d.Name] = d.Utility
+		lastKeptAt[d.Name] = dtime
 		// Output as Berlin local time with UTC offset — unambiguous and display-ready.
 		// e.g. "2026-04-06T10:30:00+02:00" (CEST) or "2026-01-15T09:30:00+01:00" (CET)
 		d.Timestamp = dtime.In(berlinLoc).Format(time.RFC3339)
 		data = append(data, d)
+	}
+	if glitches > 0 {
+		log.Printf("history: filtered %d implausible 0%% sample(s)", glitches)
 	}
 	c.JSON(200, data)
 }
@@ -483,6 +523,7 @@ func main() {
 	r := gin.Default()
 	r.Use(gin.Logger())
 
+	r.GET("/api/health", health)
 	r.GET("/api/pool-status", getPoolStatus)
 	r.GET("/api/pools", getPools)
 	r.GET("/api/history", getHistory)

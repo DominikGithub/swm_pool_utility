@@ -173,25 +173,101 @@ def add_avg_weekday_delta(df, avg_cache, steps_ahead=3):
 
 
 # ── Lag features ─────────────────────────────────────────────────────────────
+#
+# Every lag and rolling window here is resolved BY TIMESTAMP, deliberately
+# mirroring ml-prediction/predict.py's build_features.  Two bugs made the
+# earlier positional version (shift(1), rolling(3), …) disagree with serving:
+#
+#  1. shift(n) only equals "n×10 minutes ago" on a flawless grid, and the grid
+#     is not flawless.  Over 60 days this database holds 111,102 normal 10-minute
+#     intervals but also ~138 gaps, ~220 intervals SHORTER than 10 minutes, and
+#     a phase shift after every scraper restart (e.g. 17:10:07 → 17:23:18).  On
+#     each of those rows shift(1) silently meant 20 minutes, or 13, not 10 —
+#     while predict.py asked for "the reading at or before t−10min" and got it.
+#
+#  2. rolling(3)/rolling(6) INCLUDED THE CURRENT ROW, so util_rolling_30m
+#     carried utilization[t] — one third of the very quantity the target
+#     (utilization − util_lag_10m) is built from.  That is target leakage: it
+#     flattered validation scores, and it could not be reproduced at serve time,
+#     where only past readings exist.  Both windows now end at t−10min, which is
+#     exactly the span predict.py sees (3 and 6 samples respectively).
+#
+# Rows whose lags cannot be resolved within LAG_TOLERANCE are left as NaN and
+# dropped downstream, so the model only ever learns from truthful lag features
+# rather than from a value borrowed out of the wrong time slot.
+
+# Half a scrape interval.  Matching is NEAREST within this tolerance, not
+# backward-only: the cadence jitters either side of ten minutes (April 2026
+# averaged 8.8 minutes between scrapes, July 16.0), and a backward-only lookup
+# from t−10min skips to the sample two steps back whenever the interval ran
+# short, discarding 61% of the training rows.  Nearest matching tolerates
+# jitter in both directions while staying leak-free: the accepted window is
+# [t−15min, t−5min], which is strictly in the past, so no candidate can ever
+# carry the current row's value.
+LAG_TOLERANCE = pd.Timedelta(minutes=5)
+
+# feature name → how far before the row's own timestamp to read
+LAG_OFFSETS = {
+    "util_lag_10m": 10,
+    "util_lag_20m": 20,
+    "util_lag_30m": 30,
+    "util_lag_60m": 60,
+}
+
+# feature name → span of the averaging window.  The window ENDS at
+# ROLLING_END_OFFSET before the row, so "util_rolling_30m" averages
+# [t−30min, t−10min] (3 samples) and "util_rolling_1h" [t−60min, t−10min] (6).
+# The names describe the lookback from t and are kept as-is: they are part of
+# FEATURE_COLS and of every model already on disk.
+ROLLING_SPANS = {
+    "util_rolling_30m": 20,
+    "util_rolling_1h": 50,
+}
+ROLLING_END_OFFSET = 10
+
+
+def _as_of(series, offset_minutes):
+    """series' value as of offset_minutes before each of its own timestamps.
+
+    Nearest-match lookup: the value closest to the requested instant, or NaN
+    when even the closest is further away than LAG_TOLERANCE — in which case
+    the row is dropped rather than trained on a borrowed value.
+    """
+    shifted = series.reindex(
+        series.index - pd.Timedelta(minutes=offset_minutes),
+        method="nearest",
+        tolerance=LAG_TOLERANCE,
+    )
+    shifted.index = series.index
+    return shifted
+
 
 def add_lag_features(df):
     df = df.sort_values(["pool_name", "dtime"])
 
-    # Data is scraped at 10-minute intervals, so shift(1) = 10m ago, shift(2) = 20m ago, etc.
-    df["util_lag_10m"] = df.groupby("pool_name")["utilization"].shift(1)
-    df["util_lag_20m"] = df.groupby("pool_name")["utilization"].shift(2)
-    df["util_lag_30m"] = df.groupby("pool_name")["utilization"].shift(3)
-    df["util_lag_60m"] = df.groupby("pool_name")["utilization"].shift(6)
+    pieces = []
+    for _, grp in df.groupby("pool_name", sort=False):
+        grp = grp.sort_values("dtime").copy()
 
-    # Rolling windows - shorter timeframes to focus on recent data
-    df["util_rolling_30m"] = (
-        df.groupby("pool_name")["utilization"]
-        .transform(lambda s: s.rolling(3, min_periods=1).mean())
-    )
-    df["util_rolling_1h"] = (
-        df.groupby("pool_name")["utilization"]
-        .transform(lambda s: s.rolling(6, min_periods=1).mean())
-    )
+        # reindex/rolling need a unique, monotonic DatetimeIndex.  track_pools
+        # has UNIQUE(pool_id, dtime) since migration 015, so this only guards
+        # against a pre-migration database.
+        series = grp.set_index("dtime")["utilization"]
+        series = series[~series.index.duplicated(keep="first")]
+
+        for col, minutes in LAG_OFFSETS.items():
+            grp[col] = _as_of(series, minutes).reindex(grp["dtime"]).to_numpy()
+
+        for col, span in ROLLING_SPANS.items():
+            # value at instant u = mean over [u − span, u]
+            rolled = series.rolling(f"{span}min", min_periods=1, closed="both").mean()
+            grp[col] = _as_of(rolled, ROLLING_END_OFFSET).reindex(grp["dtime"]).to_numpy()
+
+        pieces.append(grp)
+
+    df = pd.concat(pieces, ignore_index=True) if pieces else df
+
+    # Identical formulas to predict.py's build_features.
     df["util_change_10m"] = df["util_lag_10m"] - df["util_lag_20m"]  # immediate 10-min delta
     df["util_change_30m"] = df["util_lag_10m"] - df["util_lag_30m"]  # 20-min window
     df["util_momentum"]   = df["util_lag_10m"] - df["util_rolling_1h"]

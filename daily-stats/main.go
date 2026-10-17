@@ -64,9 +64,13 @@ func aggregate() error {
 
 	// Read all raw data. Slot computation is done in Go (not SQL) so we can
 	// apply DST-aware timezone conversion before bucketing.
+	//
+	// Ordered by pool and time so the glitch guard below can compare each
+	// reading against that pool's previous one.
 	rows, err := db.Query(`
 		SELECT p.name, tp.dtime, tp.utility
 		FROM track_pools tp JOIN pools p ON tp.pool_id = p.id
+		ORDER BY tp.pool_id, tp.dtime
 	`)
 	if err != nil {
 		return fmt.Errorf("query failed: %w", err)
@@ -76,6 +80,20 @@ func aggregate() error {
 	// poolName -> slotIndex -> accumulator
 	data := map[string]map[int]*accumulator{}
 
+	// Last reading kept per pool, so an implausible 0% can be recognised and
+	// excluded from the averages.  SWM's widget intermittently serves 0%
+	// "capacity remaining" for pools that are plainly not full; stored as
+	// utilization that becomes a 100% reading, which is the worst possible
+	// outlier for a mean.  Thresholds mirror pool-scraper's
+	// dropImplausibleZeros, and a genuine gradual fill-up keeps its 0.
+	const (
+		glitchSpikeFloor = 60
+		glitchLookback   = time.Hour
+	)
+	lastKept := map[string]int{}
+	lastKeptAt := map[string]time.Time{}
+	glitches := 0
+
 	for rows.Next() {
 		var name string
 		var dtime time.Time // go-sqlite3 parses DATETIME columns into time.Time (UTC by default)
@@ -84,6 +102,16 @@ func aggregate() error {
 			log.Printf("scan failed: %v", err)
 			continue
 		}
+
+		if utility == 0 {
+			if prev, ok := lastKept[name]; ok && prev > glitchSpikeFloor &&
+				dtime.Sub(lastKeptAt[name]) <= glitchLookback {
+				glitches++
+				continue
+			}
+		}
+		lastKept[name] = utility
+		lastKeptAt[name] = dtime
 
 		// Convert to Berlin local time — this is the key DST-aware step.
 		tBerlin := dtime.In(loc)
@@ -109,6 +137,9 @@ func aggregate() error {
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("row iteration error: %w", err)
+	}
+	if glitches > 0 {
+		fmt.Printf("  Excluded %d implausible 0%% sample(s) from the averages\n", glitches)
 	}
 
 	tx, err := db.Begin()

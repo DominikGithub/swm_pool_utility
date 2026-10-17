@@ -24,6 +24,10 @@ SQLite database stored in a Docker volume (`db_data`), which is mounted to the h
 | dtime | DATETIME | Timestamp of measurement (UTC) |
 | utility | INT | Capacity remaining, 0–100 (100 = full / closed) |
 
+> **Uniqueness:** `UNIQUE(pool_id, dtime)` (index `idx_track_pools_pool_dtime`) enforces one
+> reading per pool per second. Inserts use `ON CONFLICT ... DO NOTHING`, so the first
+> write for a given second wins and later duplicates are skipped.
+
 **weather**
 | Column | Type | Description |
 |--------|------|-------------|
