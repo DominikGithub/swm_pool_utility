@@ -20,16 +20,16 @@
         <option value="">All Pools</option>
         <option v-for="pool in pools" :key="pool" :value="pool">{{ pool }}</option>
       </select>
-      <select v-model="selectedDays" @change="fetchData">
-        <option :value="1">Last 24 hours</option>
-        <option :value="3">Last 3 days</option>
-        <option :value="7">Last week</option>
-        <option :value="14">Last 2 weeks</option>
-        <option :value="30">Last month</option>
+      <select v-model="selectedDays" @change="onRangeChange">
+        <option :value="1">{{ isLive ? 'Last 24 hours' : '1 day' }}</option>
+        <option :value="3">{{ isLive ? 'Last 3 days' : '3 days' }}</option>
+        <option :value="7">{{ isLive ? 'Last week' : '1 week' }}</option>
+        <option :value="14">{{ isLive ? 'Last 2 weeks' : '2 weeks' }}</option>
+        <option :value="30">{{ isLive ? 'Last month' : '1 month' }}</option>
         <option value="weekday">Daily Statistics</option>
         <option value="heatmap">Heatmap</option>
       </select>
-      <button @click="fetchData">Refresh</button>
+      <button @click="refresh">Refresh</button>
       <button v-show="!isWeekdayView && !isHeatmapView" @click="toggleWeather" :class="{ active: showWeather }" class="weather-btn">
         <span class="weather-icon">{{ showWeather ? '🌤️' : '☁️' }}</span>
       </button>
@@ -58,11 +58,24 @@
             <span v-if="hasForecast" class="key-item"><i class="swatch swatch-forecast"></i>Forecast</span>
             <span class="key-item"><i class="swatch swatch-typical"></i>Usual for this weekday</span>
           </div>
-          <PoolChart :data="chartData" :weatherData="chartWeatherData" @hoverData="onHoverData" />
-          <div v-if="!isWeekdayView && !(historyData ?? []).length" class="no-data-overlay">
-            No data available for the selected pool and time range.
-            <br>Try a longer time range or select a different pool.
+          <div class="chart-area" :class="{ refreshing }">
+            <PoolChart :data="chartData" :weatherData="chartWeatherData" @hoverData="onHoverData" />
+            <div v-if="!isWeekdayView && !(historyData ?? []).length" class="no-data-overlay">
+              <template v-if="isLive">
+                No data available for the selected pool and time range.
+                <br>Try a longer time range, look further back below, or select a different pool.
+              </template>
+              <template v-else>No readings for the selected pool in this period.</template>
+            </div>
           </div>
+          <TimeNavigator
+            v-if="!isWeekdayView && overview?.days?.length"
+            :days="overview.days"
+            :values="navigatorValues"
+            :rangeDays="selectedDays"
+            :windowEnd="windowEnd"
+            @update:windowEnd="onWindowChange"
+          />
         </div>
         
         <div class="pool-list">
@@ -71,7 +84,7 @@
             :key="pool.name" 
             :pool="getPoolWithValue(pool)"
             :isFavorite="favorite === pool.name"
-            :status="isWeekdayView ? null : poolStatuses[pool.name]"
+            :status="isWeekdayView || !isLive ? null : poolStatuses[pool.name]"
             @toggleFavorite="toggleFavorite(pool.name)"
           />
           <WeatherCard v-if="showWeather && !isWeekdayView" :weather="currentWeather" />
@@ -90,7 +103,10 @@ import PoolCard from './components/PoolCard.vue'
 import WeatherCard from './components/WeatherCard.vue'
 import StatsCard from './components/StatsCard.vue'
 import HeatmapCard from './components/HeatmapCard.vue'
-import { fetchPools, fetchHistory, fetchWeather, fetchDailyAvg, fetchHourlyAvg, fetchPoolStatus } from './composables/api'
+import TimeNavigator from './components/TimeNavigator.vue'
+import {
+  fetchPools, fetchHistory, fetchWeather, fetchDailyAvg, fetchDailyOverview, fetchHourlyAvg, fetchPoolStatus
+} from './composables/api'
 
 const pools = ref([])
 const historyData = ref([])
@@ -109,9 +125,29 @@ const favorite = ref('')
 const hoverData = ref(null)
 const hoverInfo = ref(null)
 const showWeather = ref(localStorage.getItem('swm_showWeather') === 'true')
+// End of the chart's time window when looking into the past (ms of a Berlin day
+// start, exclusive); null for the live window ending now.
+const windowEnd = ref(null)
+// Daily peaks over the whole history, for the time navigator.
+const overview = ref(null)
+// A quiet reload (moving the time window) dims the chart instead of replacing it.
+const refreshing = ref(false)
 
 const isWeekdayView = computed(() => selectedDays.value === 'weekday')
 const isHeatmapView = computed(() => selectedDays.value === 'heatmap')
+const isLive = computed(() => windowEnd.value == null)
+
+// The selected pool's daily peaks, or for all pools the mean of their peaks.
+const navigatorValues = computed(() => {
+  const overviewPools = overview.value?.pools ?? []
+  if (selectedPool.value) {
+    return overviewPools.find(p => p.label === selectedPool.value)?.peak ?? overview.value.days.map(() => null)
+  }
+  return overview.value.days.map((_, i) => {
+    const vals = overviewPools.map(p => p.peak[i]).filter(v => v != null)
+    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null
+  })
+})
 const hasForecast = computed(() => chartData.value.datasets.some(ds => ds._prediction))
 const hasTypical = computed(() =>
   chartData.value.datasets.some(ds => ds._typical && ds.data.some(p => p.y != null))
@@ -195,6 +231,8 @@ function getPoolWithValue(pool) {
     // avoids showing a stale daytime value while hovering a historical gap.
     return { ...pool, utility: hoverData.value[pool.name] ?? null }
   }
+  // In a past window the last reading would read like a live value.
+  if (!isLive.value) return { ...pool, utility: null }
   return pool
 }
 
@@ -306,7 +344,8 @@ const chartData = computed(() => {
   const days = selectedDays.value
   let filtered = history
   
-  if (days > 0) {
+  // A past window is bounded by the API already.
+  if (days > 0 && isLive.value) {
     const cutoff = new Date()
     cutoff.setDate(cutoff.getDate() - days)
     filtered = historyData.value.filter(d => new Date(d.timestamp) >= cutoff)
@@ -368,11 +407,11 @@ const chartData = computed(() => {
   // Used by the chart to clamp the crosshair to the last measured point.
   const historyLength = labels.length
 
-  // Append prediction lines (dashed) for each pool — shown for views up to 3 days.
+  // Append prediction lines (dashed) for each pool — live views up to 3 days only.
   // Uses pred_series (all N steps) when available, falling back to the two-point
   // pred_1h / pred_2h for backwards compatibility with old DB rows.
   const preds = poolStatuses.value
-  if (labels.length > 0 && timestamps.length > 0 && Object.keys(preds).length > 0 && days <= 3) {
+  if (isLive.value && labels.length > 0 && timestamps.length > 0 && Object.keys(preds).length > 0 && days <= 3) {
     const now = new Date()
 
     // Derive the step interval from the series length of the first pool that has one.
@@ -447,9 +486,10 @@ const chartData = computed(() => {
   // Single pool: what has lately been typical for each weekday and time (median
   // of the 28 days before today, see daily-stats), also across the forecast.  Skipped
   // for a pool closed the whole window (an outdoor pool after the season):
-  // its recent median is 0 at night and missing during opening hours.
+  // its recent median is 0 at night and missing during opening hours.  Live
+  // only: next to a past window, today's "lately" would be the wrong yardstick.
   const typical = typicalData.value?.datasets?.find(ds => ds.label === selectedPool.value)
-  if (typical?.recent_median?.some(v => v > 0)) {
+  if (isLive.value && typical?.recent_median?.some(v => v > 0)) {
     datasets.push({
       label: 'Lately typical',
       data: timestamps.map((ts, k) => {
@@ -471,16 +511,33 @@ const chartData = computed(() => {
   return { labels, datasets, timestamps, historyLength }
 })
 
-async function fetchData() {
-  loading.value = true
+// days (and end, for a past window) for the history and weather endpoints.
+function windowParams(days) {
+  const params = new URLSearchParams()
+  params.set('days', days)
+  if (windowEnd.value != null) params.set('end', new Date(windowEnd.value).toISOString())
+  return params
+}
+
+let fetchSeq = 0
+
+// quiet: keep the chart on screen (dimmed) while loading, for moving the time
+// window.  Only the latest request's response is applied.
+async function fetchData({ quiet = false } = {}) {
+  const seq = ++fetchSeq
+  if (quiet) refreshing.value = true
+  else loading.value = true
   try {
     const isWeekday = selectedDays.value === 'weekday'
     const isHeatmap = selectedDays.value === 'heatmap'
 
     if (isHeatmap) {
-      hourlyData.value = await fetchHourlyAvg(selectedPool.value)
+      const data = await fetchHourlyAvg(selectedPool.value)
+      if (seq !== fetchSeq) return
+      hourlyData.value = data
     } else if (isWeekday) {
       const data = await fetchDailyAvg(selectedPool.value)
+      if (seq !== fetchSeq) return
       dailyAvgData.value = data
       dailyAvgStats.value = {
         weeks: data.weeks,
@@ -490,21 +547,16 @@ async function fetchData() {
         updated_at: data.updated_at
       }
     } else {
-      const fetchDays = selectedDays.value
-
-      const params = new URLSearchParams()
+      const params = windowParams(selectedDays.value)
       if (selectedPool.value) params.set('pool', selectedPool.value)
-      params.set('days', fetchDays)
-      
-      const weatherParams = new URLSearchParams()
-      weatherParams.set('days', fetchDays)
-      
+
       const [history, weather, statuses, typical] = await Promise.all([
         fetchHistory(params.toString()),
-        fetchWeather(weatherParams.toString()),
+        fetchWeather(windowParams(selectedDays.value).toString()),
         fetchPoolStatus(),
         selectedPool.value ? fetchDailyAvg(selectedPool.value) : null
       ])
+      if (seq !== fetchSeq) return
 
       typicalData.value = typical
       historyData.value = history ?? []
@@ -513,8 +565,40 @@ async function fetchData() {
     }
   } catch (err) {
     console.error('Failed to fetch data:', err)
+  } finally {
+    if (seq === fetchSeq) {
+      loading.value = false
+      refreshing.value = false
+    }
   }
-  loading.value = false
+}
+
+async function loadOverview() {
+  try {
+    overview.value = await fetchDailyOverview()
+  } catch (err) {
+    console.error('Failed to fetch daily overview:', err)
+  }
+}
+
+function refresh() {
+  loadOverview()
+  fetchData()
+}
+
+function onWindowChange(end) {
+  windowEnd.value = end
+  fetchData({ quiet: true })
+}
+
+// A longer range must still fit after the first recorded day.
+function onRangeChange() {
+  const days = overview.value?.days ?? []
+  const idx = days.findIndex(d => Date.parse(d) === windowEnd.value)
+  if (typeof selectedDays.value === 'number' && idx >= 0 && idx < selectedDays.value) {
+    windowEnd.value = Date.parse(days[Math.min(selectedDays.value, days.length - 1)])
+  }
+  fetchData()
 }
 
 async function toggleWeather() {
@@ -522,9 +606,7 @@ async function toggleWeather() {
   localStorage.setItem('swm_showWeather', showWeather.value)
   if (showWeather.value && weatherData.value.length === 0) {
     try {
-      const weatherParams = new URLSearchParams()
-      weatherParams.set('days', selectedDays.value)
-      weatherData.value = await fetchWeather(weatherParams.toString())
+      weatherData.value = await fetchWeather(windowParams(selectedDays.value).toString())
     } catch (err) {
       console.error('Failed to fetch weather:', err)
     }
@@ -532,15 +614,14 @@ async function toggleWeather() {
 }
 
 onMounted(async () => {
+  loadOverview()
   pools.value = await fetchPools()
   favorite.value = getCookie('swm_favorite') || ''
   selectedPool.value = favorite.value
   await fetchData()
   if (showWeather.value && weatherData.value.length === 0) {
     try {
-      const weatherParams = new URLSearchParams()
-      weatherParams.set('days', selectedDays.value)
-      weatherData.value = await fetchWeather(weatherParams.toString())
+      weatherData.value = await fetchWeather(windowParams(selectedDays.value).toString())
     } catch (err) {
       console.error('Failed to fetch weather:', err)
     }
@@ -562,6 +643,19 @@ onMounted(async () => {
 <style scoped>
 .chart-container {
   position: relative;
+}
+
+.chart-area {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  transition: opacity 0.15s ease;
+}
+
+.chart-area.refreshing {
+  opacity: 0.55;
 }
 
 .chart-key {

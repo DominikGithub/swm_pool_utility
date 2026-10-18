@@ -8,8 +8,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"sort"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 	_ "time/tzdata" // embed IANA timezone database for Europe/Berlin
 
@@ -43,6 +46,61 @@ const (
 	glitchLookback   = time.Hour
 )
 
+// glitchGuard applies that rule to a chronological stream of readings,
+// tracking the last believable reading per pool.
+type glitchGuard struct {
+	lastKept   map[string]int
+	lastKeptAt map[string]time.Time
+	dropped    int
+}
+
+func newGlitchGuard() *glitchGuard {
+	return &glitchGuard{lastKept: map[string]int{}, lastKeptAt: map[string]time.Time{}}
+}
+
+// keep reports whether a reading is believable and remembers it if so.  A
+// dropped reading deliberately does NOT update the state: during a glitch
+// lasting several intervals every 0 is still compared against the last
+// believable reading.  Should such a run outlast glitchLookback the guard
+// stands down, since by then a sustained 0 may well be real.  A 0 without a
+// predecessor (the very start of a requested window) is passed through.
+func (g *glitchGuard) keep(pool string, dtime time.Time, utility int) bool {
+	if utility == 0 {
+		if prev, ok := g.lastKept[pool]; ok && prev > glitchSpikeFloor &&
+			dtime.Sub(g.lastKeptAt[pool]) <= glitchLookback {
+			g.dropped++
+			return false
+		}
+	}
+	g.lastKept[pool] = utility
+	g.lastKeptAt[pool] = dtime
+	return true
+}
+
+// dbTimeLayout is the UTC format every dtime column uses.
+const dbTimeLayout = "2006-01-02 15:04:05"
+
+// queryWindow reads the parameters shared by the history and weather
+// endpoints: `days` calendar days (Berlin time) up to `end`, an RFC3339
+// timestamp such as 2026-06-14T00:00:00+02:00, or up to now when end is
+// absent.  The bounds come back as dtime strings; an empty bound is open.
+func queryWindow(c *gin.Context) (from, to string, err error) {
+	days, _ := strconv.Atoi(c.DefaultQuery("days", "1"))
+	end := time.Now()
+	if s := c.Query("end"); s != "" {
+		t, perr := time.Parse(time.RFC3339, s)
+		if perr != nil {
+			return "", "", fmt.Errorf("invalid end %q: want RFC3339, e.g. 2026-06-14T00:00:00+02:00", s)
+		}
+		end = t
+		to = t.UTC().Format(dbTimeLayout)
+	}
+	if days > 0 {
+		from = end.In(berlinLoc).AddDate(0, 0, -days).UTC().Format(dbTimeLayout)
+	}
+	return from, to, nil
+}
+
 type WeatherPoint struct {
 	Timestamp     string  `json:"timestamp"`
 	Temperature   float64 `json:"temperature"`
@@ -73,30 +131,33 @@ func getPools(c *gin.Context) {
 
 func getHistory(c *gin.Context) {
 	pool := c.Query("pool")
-	daysStr := c.DefaultQuery("days", "1")
-	days, _ := strconv.Atoi(daysStr)
-
-	query := `SELECT p.name, tp.dtime, tp.utility
-		FROM track_pools tp JOIN pools p ON tp.pool_id = p.id`
-	var args []interface{}
-
-	if days > 0 {
-		// Format cutoff as the same "YYYY-MM-DD HH:MM:SS" UTC string that SQLite
-		// stores, so the string comparison is unambiguous.
-		cutoff := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02 15:04:05")
-		query += " WHERE tp.dtime >= ?"
-		args = append(args, cutoff)
-		if pool != "" {
-			query += " AND p.name = ?"
-			args = append(args, pool)
-		}
-	} else {
-		if pool != "" {
-			query += " WHERE p.name = ?"
-			args = append(args, pool)
-		}
+	from, to, err := queryWindow(c)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
 	}
 
+	// The bounds use the same "YYYY-MM-DD HH:MM:SS" UTC strings that SQLite
+	// stores, so the string comparison is unambiguous.
+	query := `SELECT p.name, tp.dtime, tp.utility
+		FROM track_pools tp JOIN pools p ON tp.pool_id = p.id`
+	var conds []string
+	var args []interface{}
+	if from != "" {
+		conds = append(conds, "tp.dtime >= ?")
+		args = append(args, from)
+	}
+	if to != "" {
+		conds = append(conds, "tp.dtime < ?")
+		args = append(args, to)
+	}
+	if pool != "" {
+		conds = append(conds, "p.name = ?")
+		args = append(args, pool)
+	}
+	if len(conds) > 0 {
+		query += " WHERE " + strings.Join(conds, " AND ")
+	}
 	query += " ORDER BY tp.dtime ASC"
 
 	rows, err := db.Query(query, args...)
@@ -108,58 +169,50 @@ func getHistory(c *gin.Context) {
 
 	data := make([]DataPoint, 0)
 
-	// Last reading kept per pool, used to recognise an implausible 0%.  Rows
-	// arrive in dtime order, so per pool they are already chronological.  A
-	// dropped sample deliberately does NOT update this state: during a glitch
-	// lasting several intervals every 0 is still compared against the last
-	// believable reading.  Should such a run outlast glitchLookback the guard
-	// stands down, since by then a sustained 0 may well be real.
-	lastKept := map[string]int{}
-	lastKeptAt := map[string]time.Time{}
-	glitches := 0
-
+	// Rows arrive in dtime order, so per pool they are already chronological.
+	guard := newGlitchGuard()
 	for rows.Next() {
 		var d DataPoint
 		var dtime time.Time // go-sqlite3 parses DATETIME columns into time.Time (UTC)
 		if err := rows.Scan(&d.Name, &dtime, &d.Utility); err != nil {
 			continue
 		}
-		if d.Utility == 0 {
-			// A 0 at the very start of the requested window has no predecessor
-			// to judge it by and is passed through unchanged.
-			if prev, ok := lastKept[d.Name]; ok && prev > glitchSpikeFloor &&
-				dtime.Sub(lastKeptAt[d.Name]) <= glitchLookback {
-				glitches++
-				continue
-			}
+		if !guard.keep(d.Name, dtime, d.Utility) {
+			continue
 		}
-		lastKept[d.Name] = d.Utility
-		lastKeptAt[d.Name] = dtime
 		// Output as Berlin local time with UTC offset — unambiguous and display-ready.
 		// e.g. "2026-04-06T10:30:00+02:00" (CEST) or "2026-01-15T09:30:00+01:00" (CET)
 		d.Timestamp = dtime.In(berlinLoc).Format(time.RFC3339)
 		data = append(data, d)
 	}
-	if glitches > 0 {
-		log.Printf("history: filtered %d implausible 0%% sample(s)", glitches)
+	if guard.dropped > 0 {
+		log.Printf("history: filtered %d implausible 0%% sample(s)", guard.dropped)
 	}
 	c.JSON(200, data)
 }
 
 func getWeather(c *gin.Context) {
-	daysStr := c.DefaultQuery("days", "1")
-	days, _ := strconv.Atoi(daysStr)
+	from, to, err := queryWindow(c)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
 
 	query := `SELECT w.dtime, w.temperature, w.wind_speed, w.cloud_cover, wt.type, w.precipitation
 		FROM weather w JOIN weather_types wt ON w.weather_type_id = wt.id`
+	var conds []string
 	var args []interface{}
-
-	if days > 0 {
-		cutoff := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02 15:04:05")
-		query += " WHERE w.dtime >= ?"
-		args = append(args, cutoff)
+	if from != "" {
+		conds = append(conds, "w.dtime >= ?")
+		args = append(args, from)
 	}
-
+	if to != "" {
+		conds = append(conds, "w.dtime < ?")
+		args = append(args, to)
+	}
+	if len(conds) > 0 {
+		query += " WHERE " + strings.Join(conds, " AND ")
+	}
 	query += " ORDER BY w.dtime ASC"
 
 	rows, err := db.Query(query, args...)
@@ -180,6 +233,129 @@ func getWeather(c *gin.Context) {
 		data = append(data, d)
 	}
 	c.JSON(200, data)
+}
+
+// The time navigator under the live chart draws one bar per day: each pool's
+// daily peak over the whole history.  Building it reads every stored reading,
+// so the result is cached for overviewTTL instead of rebuilt per request.
+const overviewTTL = 10 * time.Minute
+
+type dailyOverview struct {
+	Days  []string       `json:"days"` // Berlin midnight of each day, RFC3339
+	Pools []overviewPool `json:"pools"`
+}
+
+type overviewPool struct {
+	Label string     `json:"label"`
+	Peak  []*float64 `json:"peak"` // null: no readings that day
+}
+
+var (
+	overviewMu      sync.Mutex
+	overviewCache   *dailyOverview
+	overviewBuiltAt time.Time
+)
+
+func getDailyOverview(c *gin.Context) {
+	overviewMu.Lock()
+	if overviewCache == nil || time.Since(overviewBuiltAt) > overviewTTL {
+		ov, err := buildDailyOverview()
+		if err != nil {
+			overviewMu.Unlock()
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		overviewCache, overviewBuiltAt = ov, time.Now()
+	}
+	ov := overviewCache
+	overviewMu.Unlock()
+
+	pool := c.Query("pool")
+	if pool == "" {
+		c.JSON(200, ov)
+		return
+	}
+	out := dailyOverview{Days: ov.Days, Pools: []overviewPool{}}
+	for _, p := range ov.Pools {
+		if p.Label == pool {
+			out.Pools = append(out.Pools, p)
+		}
+	}
+	c.JSON(200, out)
+}
+
+// buildDailyOverview returns, for every Berlin calendar day from the first
+// stored reading up to today, each pool's daily peak: the 90th percentile of
+// that day's readings, so a single spike does not set the bar.
+func buildDailyOverview() (*dailyOverview, error) {
+	rows, err := db.Query(`SELECT p.name, tp.dtime, tp.utility
+		FROM track_pools tp JOIN pools p ON tp.pool_id = p.id
+		ORDER BY tp.pool_id, tp.dtime`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// pool -> "YYYY-MM-DD" (Berlin) -> utilization readings
+	byPool := map[string]map[string][]float64{}
+	var first time.Time
+	guard := newGlitchGuard()
+	for rows.Next() {
+		var name string
+		var dtime time.Time
+		var utility int
+		if err := rows.Scan(&name, &dtime, &utility); err != nil {
+			continue
+		}
+		if !guard.keep(name, dtime, utility) {
+			continue
+		}
+		if first.IsZero() || dtime.Before(first) {
+			first = dtime
+		}
+		if byPool[name] == nil {
+			byPool[name] = map[string][]float64{}
+		}
+		day := dtime.In(berlinLoc).Format("2006-01-02")
+		byPool[name][day] = append(byPool[name][day], float64(100-utility))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	ov := &dailyOverview{Days: []string{}, Pools: []overviewPool{}}
+	if first.IsZero() {
+		return ov, nil
+	}
+	var keys []string
+	f, now := first.In(berlinLoc), time.Now().In(berlinLoc)
+	for d := time.Date(f.Year(), f.Month(), f.Day(), 0, 0, 0, 0, berlinLoc); !d.After(now); d = d.AddDate(0, 0, 1) {
+		ov.Days = append(ov.Days, d.Format(time.RFC3339))
+		keys = append(keys, d.Format("2006-01-02"))
+	}
+
+	names := make([]string, 0, len(byPool))
+	for name := range byPool {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		peaks := make([]*float64, len(keys))
+		for i, key := range keys {
+			vals := byPool[name][key]
+			if len(vals) == 0 {
+				continue
+			}
+			sort.Float64s(vals)
+			pos := 0.9 * float64(len(vals)-1)
+			lo := int(pos)
+			hi := int(math.Ceil(pos))
+			v := math.Round((vals[lo]+(vals[hi]-vals[lo])*(pos-float64(lo)))*10) / 10
+			peaks[i] = &v
+		}
+		ov.Pools = append(ov.Pools, overviewPool{Label: name, Peak: peaks})
+	}
+	return ov, nil
 }
 
 func health(c *gin.Context) {
@@ -551,6 +727,7 @@ func main() {
 	r.GET("/api/history", getHistory)
 	r.GET("/api/weather", getWeather)
 	r.GET("/api/daily-avg", getDailyAvg)
+	r.GET("/api/daily-overview", getDailyOverview)
 	r.GET("/api/hourly-avg", getHourlyAvg)
 	r.GET("/api/predictions", getPredictions)
 

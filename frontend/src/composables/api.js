@@ -27,6 +27,12 @@ export async function fetchDailyAvg(pool = '') {
   return res.json()
 }
 
+// One bar per day for the time navigator: each pool's daily peak since the first reading.
+export async function fetchDailyOverview() {
+  const res = await fetch(`${API_BASE}/daily-overview`)
+  return res.json()
+}
+
 export async function fetchHourlyAvg(pool = '') {
   const qs = pool ? `pool=${encodeURIComponent(pool)}` : ''
   const res = await fetch(`${API_BASE}/hourly-avg${qs ? '?' + qs : ''}`)

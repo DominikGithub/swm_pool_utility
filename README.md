@@ -37,6 +37,12 @@ See the `Backend maintenance` section below for troubleshooting setup. First tim
   - In longer views (last week, last month) the earlier days shown are themselves part of the 28-day window, so the line follows them more closely; the most meaningful comparison is today and the forecast
   - Each point is the median of those readings within a 50-minute window around its 10-minute slot (about 20 readings); days the pool was closed during its opening hours are left out
   - Where a pool had no open readings in those 28 days (e.g. an outdoor pool after the season ended), the line is not drawn
+  - Shown in the live view only; next to a past period, what was usual in the last 4 weeks would be the wrong yardstick
+- **Time navigator** — a strip under the chart with one bar per day over the whole recorded history (the day's peak: 90th percentile of its readings, so a single spike does not set the bar). The highlighted window is the period the chart shows; its width is the selected range
+  - **Drag** the window or **tap** a day to show that period, e.g. one day, a week or a month in July at full 10-minute detail. Past periods cover whole calendar days (Berlin time); the label above the strip names them
+  - **↺ Now** (or dragging to the right end) returns to the live view; on a keyboard, ←/→ move one window, Home/End jump to the oldest period/now
+  - In a past period the forecast, trend arrows and the lately-typical line are hidden, and the pool cards show a value only while hovering the chart
+  - Works with touch: horizontal drags on the strip move the window, vertical swipes still scroll the page
 - **Temperature** — subtle amber area chart indicating temperature (normalized to the 0–100% axis, range –10°C to 35°C)
 - **Weather icon** — emoji icons, shown at weather-state change points:
   - Clear / ⛅ Partly cloudy / ☁️ Cloudy / 🌧️ Rain / 🌦️ Drizzle / ❄️ Snow / 🌨️ Sleet / ⛈️ Thunderstorm / 🌫️ Fog
@@ -138,7 +144,9 @@ Fetches 7-day weather forecast from [Open-Meteo Forecast API](https://open-meteo
 | `GET /api/pool-status` | Current utilization status for all pools |
 | `GET /api/history?days=1` | Get pool history (default: 24 hours) |
 | `GET /api/history?pool=X&days=30` | Filter by specific pool |
-| `GET /api/weather?days=1` | Get weather history (default: 24 hours) |
+| `GET /api/history?pool=X&days=7&end=2026-07-12T00:00:00%2B02:00` | A past period: `days` calendar days (Berlin time) up to `end` (RFC3339, exclusive) |
+| `GET /api/weather?days=1` | Get weather history (default: 24 hours); also accepts `end` |
+| `GET /api/daily-overview` | Daily peak per pool (90th percentile of the day) since the first reading, for the time navigator; cached for 10 minutes |
 | `GET /api/daily-avg` | Get cached daily statistics |
 | `GET /api/daily-avg?pool=X` | Get cached daily statistics for a specific pool |
 | `GET /api/hourly-avg` | Get hourly average utilization per day-of-week (heatmap data) |
