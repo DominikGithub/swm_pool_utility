@@ -70,6 +70,7 @@ The "Daily Statistics" option shows the **recurring weekly utilization pattern**
 The heatmap view shows the **weekly utilization pattern** across 30min time slots:
 - **Colors**: Green (low crowds) → Yellow → Red (high crowds)
 - **Gray cells**: Pool is closed or insufficient data
+- **Icon next to the pool name**: orange sun = outdoor pool (Freibad), blue roof over water = indoor pool (Hallenbad). The type is set per pool in `frontend/src/data/pool-opening-hours.json` (`"type": "outdoor"` / `"indoor"`)
 
 ### Pool cards
 - One card per pool showing the current (or hovered) utilization percentage

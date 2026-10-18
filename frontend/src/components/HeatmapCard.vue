@@ -2,7 +2,18 @@
   <div class="heatmap-container">
     <div class="heatmap-grid" :class="{ 'single-pool': poolDataList.length === 1 }">
       <div v-for="poolData in poolDataList" :key="poolData.pool" class="pool-heatmap">
-        <div class="pool-header">{{ poolData.pool }}</div>
+        <div class="pool-header">
+          <svg v-if="poolData.type === 'outdoor'" class="pool-type-icon outdoor" viewBox="0 0 16 16" role="img" aria-label="Outdoor pool (Freibad)">
+            <title>Outdoor pool (Freibad)</title>
+            <circle cx="8" cy="8" r="3" />
+            <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.4 1.4M11.55 11.55l1.4 1.4M3.05 12.95l1.4-1.4M11.55 4.45l1.4-1.4" />
+          </svg>
+          <svg v-else-if="poolData.type === 'indoor'" class="pool-type-icon indoor" viewBox="0 0 16 16" role="img" aria-label="Indoor pool (Hallenbad)">
+            <title>Indoor pool (Hallenbad)</title>
+            <path d="M1.5 7 8 2l6.5 5" />
+            <path d="M2.5 10.5q1.375-1.25 2.75 0t2.75 0 2.75 0 2.75 0M2.5 13.5q1.375-1.25 2.75 0t2.75 0 2.75 0 2.75 0" />
+          </svg>{{ poolData.pool }}
+        </div>
         <div class="pool-body">
           <div class="y-axis">
             <div v-for="day in days" :key="day" class="y-label">{{ day }}</div>
@@ -91,26 +102,29 @@ const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 // bound — the statistical closedFraction detection in the hourly-avg API
 // catches actual earlier closings.
 //
+// Each entry also carries "type": "outdoor" (Freibad) or "indoor"
+// (Hallenbad), shown as an icon next to the pool name.  The
+// Dante-Winter-Warmfreibad is a heated open-air pool, so it counts as outdoor.
+//
 // Match ordering matters: more‑specific patterns (e.g. "dantebad") must
-// appear before less‑specific ones (e.g. "dante") because getSchedule()
+// appear before less‑specific ones (e.g. "dante") because getEntry()
 // returns the first match.
 // ---------------------------------------------------------------------------
 import POOL_SCHEDULES from '@/data/pool-opening-hours.json'
 
-// Cache schedule look-ups per pool name so we only search once.
-const scheduleCache = {}
+// Cache entry look-ups per pool name so we only search once.
+const entryCache = {}
+
+function getEntry(poolName) {
+  if (poolName in entryCache) return entryCache[poolName]
+  const lower = poolName.toLowerCase()
+  const entry = POOL_SCHEDULES.find(e => e.match.some(k => lower.includes(k))) ?? null
+  entryCache[poolName] = entry
+  return entry
+}
 
 function getSchedule(poolName) {
-  if (poolName in scheduleCache) return scheduleCache[poolName]
-  const lower = poolName.toLowerCase()
-  for (const entry of POOL_SCHEDULES) {
-    if (entry.match.some(k => lower.includes(k))) {
-      scheduleCache[poolName] = entry.days
-      return entry.days
-    }
-  }
-  scheduleCache[poolName] = null
-  return null
+  return getEntry(poolName)?.days ?? null
 }
 
 /**
@@ -155,7 +169,7 @@ const poolDataList = computed(() => {
 
   return Object.entries(byPool)
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([pool, grid]) => ({ pool, grid }))
+    .map(([pool, grid]) => ({ pool, grid, type: getEntry(pool)?.type ?? null }))
 })
 
 function getCellClass(poolData, dayIdx, slotIdx) {
@@ -237,6 +251,21 @@ function hideTooltip() {
   color: #333;
   margin-bottom: 4px;
 }
+
+.pool-type-icon {
+  width: 1em;
+  height: 1em;
+  margin-right: 0.3em;
+  vertical-align: -0.15em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.pool-type-icon.outdoor { color: #d97706; }
+.pool-type-icon.indoor { color: #0066cc; }
 
 .pool-body {
   display: flex;
