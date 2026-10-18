@@ -1,0 +1,17 @@
+# All crawlers are welcome, including AI search and assistant crawlers,
+# which are listed explicitly so the intent is unambiguous.
+User-agent: GPTBot
+User-agent: OAI-SearchBot
+User-agent: ChatGPT-User
+User-agent: ClaudeBot
+User-agent: Claude-SearchBot
+User-agent: Claude-User
+User-agent: PerplexityBot
+User-agent: Perplexity-User
+User-agent: Google-Extended
+Allow: /
+
+User-agent: *
+Allow: /
+
+Sitemap: http://grid.resolve.bar:8086/sitemap.xml

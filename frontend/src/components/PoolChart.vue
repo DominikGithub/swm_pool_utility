@@ -221,7 +221,7 @@ function updateHoverData(chart, mouseX, mouseY) {
   const values = {}
 
   chart.data.datasets?.forEach(ds => {
-    if (ds._weather || ds._ci || (inPredictionZone !== Boolean(ds._prediction)) || !ds.data) return
+    if (ds._weather || ds._band || ds._typical || (inPredictionZone !== Boolean(ds._prediction)) || !ds.data) return
 
     const point = ds.data.find(p =>
       p != null && typeof p === 'object' && p.x === targetLabel

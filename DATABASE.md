@@ -47,8 +47,12 @@ SQLite database stored in a Docker volume (`db_data`), which is mounted to the h
 | id | INTEGER PK | Auto-increment |
 | pool_id | INTEGER FK → pools.id | Pool reference |
 | slot_index | INT | Time slot index (0–1007: Mon 00:00 → Sun 23:50 in 10-min steps) |
-| mean_utilization | REAL | Mean utilization percentage for this pool and slot |
-| std_dev | REAL | Population standard deviation |
+| mean_utilization | REAL | Mean utilization percentage for this pool and slot (all readings; used by the ML feature `avg_weekday_delta`) |
+| std_dev | REAL | Population standard deviation of those readings |
+| p25_utilization | REAL NULL | 25th percentile, closure days excluded (lower edge of the Daily Statistics band) |
+| median_utilization | REAL NULL | Median, closure days excluded (Daily Statistics line) |
+| p75_utilization | REAL NULL | 75th percentile, closure days excluded (upper edge of the Daily Statistics band) |
+| recent_median_utilization | REAL NULL | Median of the 28 full days before today (Berlin time) only, closure days excluded ("lately typical" line in the single-pool live chart) |
 | sample_count | INT | Number of data points contributing to the mean |
 | updated_at | DATETIME | Timestamp of the last cache refresh |
 

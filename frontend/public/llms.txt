@@ -1,0 +1,17 @@
+# SWM Pool Utilization
+
+> Live and historical utilization of the public swimming pools run by Stadtwerke München (SWM) in Munich, scraped every 10 minutes, with weather, a 2-hour forecast and weekly statistics.
+
+- Live chart per pool, with a "lately typical" line (median of the 28 days before today) and a 2-hour forecast
+- Daily Statistics: median week with the middle 50% of weeks, closure days excluded
+- Heatmap of the weekly pattern in 30-minute slots
+- Covers year-round indoor pools (e.g. Michaelibad, Nordbad, Südbad, Olympia-Schwimmhalle) and seasonal outdoor pools
+
+## Links
+- [Dashboard](http://grid.resolve.bar:8086/): live utilization and statistics
+- [Source code and docs](https://github.com/DominikGithub/swm_pool_utility)
+
+## Data API (JSON)
+- [Pools](http://grid.resolve.bar:8086/api/pools)
+- [Current status and forecast](http://grid.resolve.bar:8086/api/pool-status)
+- [Weekly statistics](http://grid.resolve.bar:8086/api/daily-avg?pool=Michaelibad)

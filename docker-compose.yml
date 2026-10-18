@@ -13,7 +13,7 @@ services:
              sqlite3 /data/swm_pool_utility.db \"INSERT OR IGNORE INTO weather_types(type) VALUES ('clear'),('partly_cloudy'),('foggy'),('rain'),('snow'),('thunderstorm'),('unknown');\" &&
              sqlite3 /data/swm_pool_utility.db 'CREATE TABLE IF NOT EXISTS track_pools(id INTEGER PRIMARY KEY AUTOINCREMENT, pool_id INTEGER NOT NULL REFERENCES pools(id), dtime DATETIME DEFAULT CURRENT_TIMESTAMP, utility INT);' &&
              sqlite3 /data/swm_pool_utility.db 'CREATE TABLE IF NOT EXISTS weather(id INTEGER PRIMARY KEY AUTOINCREMENT, dtime DATETIME DEFAULT CURRENT_TIMESTAMP, temperature REAL, wind_speed REAL, wind_direction REAL, precipitation REAL, cloud_cover INT, weather_code INT, weather_type_id INTEGER NOT NULL REFERENCES weather_types(id));' &&
-             sqlite3 /data/swm_pool_utility.db 'CREATE TABLE IF NOT EXISTS daily_avg_cache(id INTEGER PRIMARY KEY AUTOINCREMENT, pool_id INTEGER NOT NULL REFERENCES pools(id), slot_index INT NOT NULL, mean_utilization REAL NOT NULL, std_dev REAL NOT NULL, sample_count INT NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, UNIQUE(pool_id, slot_index));' &&
+             sqlite3 /data/swm_pool_utility.db 'CREATE TABLE IF NOT EXISTS daily_avg_cache(id INTEGER PRIMARY KEY AUTOINCREMENT, pool_id INTEGER NOT NULL REFERENCES pools(id), slot_index INT NOT NULL, mean_utilization REAL NOT NULL, std_dev REAL NOT NULL, p25_utilization REAL, median_utilization REAL, p75_utilization REAL, recent_median_utilization REAL, sample_count INT NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, UNIQUE(pool_id, slot_index));' &&
              sqlite3 /data/swm_pool_utility.db 'CREATE INDEX IF NOT EXISTS idx_track_pools_pool_id_dtime ON track_pools(pool_id, dtime, utility);' &&
              sqlite3 /data/swm_pool_utility.db 'CREATE INDEX IF NOT EXISTS idx_track_pools_dtime ON track_pools(dtime);' &&
              sqlite3 /data/swm_pool_utility.db 'CREATE UNIQUE INDEX IF NOT EXISTS idx_track_pools_pool_dtime ON track_pools(pool_id, dtime);' &&
@@ -77,8 +77,10 @@ services:
     build: ./daily-stats
     volumes:
       - db_data:/data
+      - ./frontend/src/data/pool-opening-hours.json:/schedules/pool-opening-hours.json:ro
     environment:
       - DB_PATH=/data/swm_pool_utility.db
+      - SCHEDULE_PATH=/schedules/pool-opening-hours.json
     restart: unless-stopped
     logging:
       driver: "json-file"

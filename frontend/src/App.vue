@@ -45,6 +45,19 @@
       </div>
       <template v-else>
         <div class="chart-container" @mouseleave="onHoverData(null, null)">
+          <div v-if="isWeekdayView" class="chart-key">
+            <template v-if="selectedPool">
+              <span class="key-item"><i class="swatch swatch-line"></i>Median week</span>
+              <span class="key-item"><i class="swatch swatch-band"></i>Middle 50% of weeks (25th–75th percentile)</span>
+            </template>
+            <span v-else class="key-item">Lines: median week per pool</span>
+            <span class="key-note">Days a pool was closed during opening hours are left out</span>
+          </div>
+          <div v-else-if="selectedPool && hasTypical" class="chart-key">
+            <span class="key-item"><i class="swatch swatch-line"></i>Measured</span>
+            <span v-if="hasForecast" class="key-item"><i class="swatch swatch-forecast"></i>Forecast</span>
+            <span class="key-item"><i class="swatch swatch-typical"></i>Usual for this weekday</span>
+          </div>
           <PoolChart :data="chartData" :weatherData="chartWeatherData" @hoverData="onHoverData" />
           <div v-if="!isWeekdayView && !(historyData ?? []).length" class="no-data-overlay">
             No data available for the selected pool and time range.
@@ -83,6 +96,9 @@ const pools = ref([])
 const historyData = ref([])
 const dailyAvgData = ref({ labels: [], datasets: [] })
 const dailyAvgStats = ref(null)
+// Daily statistics of the selected pool; their recent median is the live chart's
+// "lately typical" line.
+const typicalData = ref(null)
 const hourlyData = ref([])
 const weatherData = ref([])
 const poolStatuses = ref({})
@@ -96,6 +112,10 @@ const showWeather = ref(localStorage.getItem('swm_showWeather') === 'true')
 
 const isWeekdayView = computed(() => selectedDays.value === 'weekday')
 const isHeatmapView = computed(() => selectedDays.value === 'heatmap')
+const hasForecast = computed(() => chartData.value.datasets.some(ds => ds._prediction))
+const hasTypical = computed(() =>
+  chartData.value.datasets.some(ds => ds._typical && ds.data.some(p => p.y != null))
+)
 
 const emptyWeather = []
 
@@ -149,6 +169,24 @@ function formatTimestamp(isoString) {
     hour: '2-digit',
     minute: '2-digit'
   })
+}
+
+const berlinWeekTime = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Europe/Berlin',
+  weekday: 'short',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23'
+})
+const WEEKDAY_INDEX = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 }
+
+// Daily statistics slot for a timestamp: Monday=0 .. Sunday=6, 144 ten-minute
+// slots per day, in Berlin wall-clock time like the daily-stats aggregator.
+function berlinWeekSlot(isoString) {
+  const parts = Object.fromEntries(
+    berlinWeekTime.formatToParts(new Date(isoString)).map(p => [p.type, p.value])
+  )
+  return WEEKDAY_INDEX[parts.weekday] * 144 + Math.floor((Number(parts.hour) * 60 + Number(parts.minute)) / 10)
 }
 
 function getPoolWithValue(pool) {
@@ -207,20 +245,20 @@ const chartData = computed(() => {
     const isSinglePool = selectedPool.value !== ''
     const datasets = []
 
+    // Line = median week, band = P25–P75 (the middle half of observed weeks),
+    // both computed by daily-stats with closure days excluded.
+    const toPoints = values => apiData.labels.map((label, idx) => {
+      const v = values?.[idx]
+      return v == null || v < 0 ? { x: label, y: NaN } : { x: label, y: v }
+    })
+
     apiData.datasets.forEach((ds, i) => {
       const color = CHART_COLORS[i % CHART_COLORS.length]
-      const rawData = ds.data
-      const stddev = ds.stddev || []
-
-      const points = apiData.labels.map((label, idx) => {
-        const v = rawData[idx]
-        return v < 0 ? { x: label, y: NaN } : { x: label, y: v }
-      })
 
       if (isSinglePool) {
         datasets.push({
-          label: ds.label + ' (lower)',
-          data: points.map((p, idx) => !isNaN(p.y) ? { x: p.x, y: Math.max(0, p.y - (stddev[idx] || 0)) } : p),
+          label: ds.label + ' (P25)',
+          data: toPoints(ds.p25),
           borderColor: 'transparent',
           borderWidth: 0,
           pointRadius: 0,
@@ -229,11 +267,11 @@ const chartData = computed(() => {
           tension: 0.3,
           fill: false,
           spanGaps: true,
-          _ci: true
+          _band: true
         })
         datasets.push({
-          label: ds.label + ' (upper)',
-          data: points.map((p, idx) => !isNaN(p.y) ? { x: p.x, y: Math.min(100, p.y + (stddev[idx] || 0)) } : p),
+          label: ds.label + ' (P75)',
+          data: toPoints(ds.p75),
           borderColor: 'transparent',
           borderWidth: 0,
           pointRadius: 0,
@@ -243,13 +281,13 @@ const chartData = computed(() => {
           backgroundColor: hexToRgba(color, 0.15),
           fill: '-1',
           spanGaps: true,
-          _ci: true
+          _band: true
         })
       }
 
       datasets.push({
         label: ds.label,
-        data: points,
+        data: toPoints(ds.median),
         borderColor: color,
         tension: 0.3,
         fill: false,
@@ -406,6 +444,29 @@ const chartData = computed(() => {
     }
   }
 
+  // Single pool: what has lately been typical for each weekday and time (median
+  // of the 28 days before today, see daily-stats), also across the forecast.  Skipped
+  // for a pool closed the whole window (an outdoor pool after the season):
+  // its recent median is 0 at night and missing during opening hours.
+  const typical = typicalData.value?.datasets?.find(ds => ds.label === selectedPool.value)
+  if (typical?.recent_median?.some(v => v > 0)) {
+    datasets.push({
+      label: 'Lately typical',
+      data: timestamps.map((ts, k) => {
+        const v = typical.recent_median[berlinWeekSlot(ts)]
+        return { x: labels[k], y: v >= 0 ? v : null }
+      }),
+      borderColor: '#64748b',
+      borderDash: [2, 3],
+      borderWidth: 1.5,
+      pointRadius: 0,
+      tension: 0.3,
+      fill: false,
+      spanGaps: false,
+      _typical: true
+    })
+  }
+
   datasets.forEach(ds => { ds.data = ds.data.filter(p => p != null) })
   return { labels, datasets, timestamps, historyLength }
 })
@@ -438,12 +499,14 @@ async function fetchData() {
       const weatherParams = new URLSearchParams()
       weatherParams.set('days', fetchDays)
       
-      const [history, weather, statuses] = await Promise.all([
+      const [history, weather, statuses, typical] = await Promise.all([
         fetchHistory(params.toString()),
         fetchWeather(weatherParams.toString()),
-        fetchPoolStatus()
+        fetchPoolStatus(),
+        selectedPool.value ? fetchDailyAvg(selectedPool.value) : null
       ])
-      
+
+      typicalData.value = typical
       historyData.value = history ?? []
       weatherData.value = weather ?? []
       poolStatuses.value = Object.fromEntries((statuses ?? []).map(s => [s.name, s]))
@@ -499,6 +562,56 @@ onMounted(async () => {
 <style scoped>
 .chart-container {
   position: relative;
+}
+
+.chart-key {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 1rem;
+  padding: 0.6rem 0.9rem 0;
+  font-size: 0.75rem;
+  color: #4b5563;
+}
+
+.key-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.key-note {
+  color: #9ca3af;
+}
+
+.swatch {
+  display: inline-block;
+  width: 25px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+/* Single-pool view always draws with CHART_COLORS[0]. */
+.swatch-line {
+  height: 3px;
+  background: #0066cc;
+}
+
+/* Dash patterns match the chart: forecast borderDash [5, 5], typical [2, 3]. */
+.swatch-forecast {
+  height: 2px;
+  border-radius: 0;
+  background: repeating-linear-gradient(to right, #0066cc 0 5px, transparent 5px 10px);
+}
+
+.swatch-typical {
+  height: 2px;
+  border-radius: 0;
+  background: repeating-linear-gradient(to right, #64748b 0 2px, transparent 2px 5px);
+}
+
+.swatch-band {
+  background: rgba(0, 102, 204, 0.15);
 }
 
 .no-data-overlay {

@@ -32,6 +32,11 @@ See the `Backend maintenance` section below for troubleshooting setup. First tim
 
 ### Chart
 - **Pool utilization** — one coloured line per pool showing utilization (%) over time
+- **Lately typical utilization** — with a single pool selected, a thin grey dashed line shows how busy the pool has lately been at the same weekday and time, also across the forecast, so you can see whether it is busier or quieter than usual right now
+  - **Time horizon:** the readings of the **28 full days before today** (4 weeks, Berlin time, from midnight 28 days ago up to last midnight), i.e. about four readings per weekday and 10-minute slot. Today's own readings are not included, so the current day is compared with earlier days rather than with itself, and the line stays the same all day. The window moves forward by one day at midnight, so the line follows seasonal changes
+  - In longer views (last week, last month) the earlier days shown are themselves part of the 28-day window, so the line follows them more closely; the most meaningful comparison is today and the forecast
+  - Each point is the median of those readings within a 50-minute window around its 10-minute slot (about 20 readings); days the pool was closed during its opening hours are left out
+  - Where a pool had no open readings in those 28 days (e.g. an outdoor pool after the season ended), the line is not drawn
 - **Temperature** — subtle amber area chart indicating temperature (normalized to the 0–100% axis, range –10°C to 35°C)
 - **Weather icon** — emoji icons, shown at weather-state change points:
   - Clear / ⛅ Partly cloudy / ☁️ Cloudy / 🌧️ Rain / 🌦️ Drizzle / ❄️ Snow / 🌨️ Sleet / ⛈️ Thunderstorm / 🌫️ Fog
@@ -45,7 +50,11 @@ The toolbar button (☁️ / 🌤️) toggles weather overlays on/off:
 
 ### Daily Statistics
 The "Daily Statistics" option shows the **recurring weekly utilization pattern**:
-- In _single-pool mode_, the confidence-interval band (mean ± 1σ) highlights utilization variability
+- **Time horizon:** all readings since recording began (the **Coverage** tile shows how many weeks), refreshed hourly. Seasons are not separated, so a quiet or busy season sits below or above this line; for the current season see the lately-typical line in the live chart
+- The line is the **median** week; in _single-pool mode_ the band spans the 25th–75th percentile, i.e. the middle half of observed weeks
+- Days a pool was closed during its opening hours (season end, maintenance, early closing) are left out, so they do not pull the typical week towards 0%
+- Percentiles use a 50-minute window around each 10-minute slot, so the line stays steady with only one reading per week and slot
+- A legend above the chart explains the line and the band
 - The statistics tile shows data coverage: 
   - **Coverage** (historic time horizon taken into account for the statistics calculation)
   - **Samples** (total measurements)

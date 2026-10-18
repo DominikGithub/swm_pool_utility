@@ -3,10 +3,30 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SWM Pool Utilization</title>
+  <title>SWM Pool Utilization – live occupancy of Munich's public swimming pools</title>
+  <meta name="description" content="Live and historical utilization of the public swimming pools run by Stadtwerke München (SWM) in Munich, updated every 10 minutes, with weather, a 2-hour forecast and weekly statistics.">
 </head>
 <body>
   <div id="app"></div>
+  <noscript>
+    <h1>SWM Pool Utilization</h1>
+    <p>
+      Live and historical utilization of the public swimming pools run by Stadtwerke München (SWM)
+      in Munich. Readings are collected every 10 minutes and shown together with the weather and a
+      2-hour forecast. Per pool, the chart compares the current load with what has lately been typical
+      for the same weekday and time; the Daily Statistics view shows the typical week and how much
+      weeks vary, and a heatmap shows the weekly pattern in 30-minute slots.
+    </p>
+    <p>
+      Covers the year-round indoor pools (such as Michaelibad, Nordbad, Südbad, Olympia-Schwimmhalle,
+      Cosimawellenbad, Müller'sches Volksbad and Bad Giesing-Harlaching) and the seasonal outdoor pools.
+    </p>
+    <p>
+      The dashboard needs JavaScript. Source code and documentation:
+      <a href="https://github.com/DominikGithub/swm_pool_utility">github.com/DominikGithub/swm_pool_utility</a>.
+      Summary for AI tools: <a href="/llms.txt">/llms.txt</a>.
+    </p>
+  </noscript>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>

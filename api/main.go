@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"time"
 	_ "time/tzdata" // embed IANA timezone database for Europe/Berlin
@@ -188,7 +189,8 @@ func health(c *gin.Context) {
 func getDailyAvg(c *gin.Context) {
 	pool := c.Query("pool")
 
-	query := `SELECT p.name, dac.slot_index, dac.mean_utilization, dac.std_dev, dac.sample_count, dac.updated_at
+	query := `SELECT p.name, dac.slot_index, dac.p25_utilization, dac.median_utilization, dac.p75_utilization,
+		dac.recent_median_utilization, dac.sample_count, dac.updated_at
 		FROM daily_avg_cache dac JOIN pools p ON dac.pool_id = p.id`
 	var args []interface{}
 	if pool != "" {
@@ -204,10 +206,10 @@ func getDailyAvg(c *gin.Context) {
 	}
 	defer rows.Close()
 
+	// Percentiles are NULL for slots where every reading fell on a closure.
 	type slotData struct {
-		mean        float64
-		stddev      float64
-		sampleCount int
+		p25, median, p75, recentMedian sql.NullFloat64
+		sampleCount                    int
 	}
 
 	// poolName -> slotIndex -> slotData
@@ -218,17 +220,16 @@ func getDailyAvg(c *gin.Context) {
 	for rows.Next() {
 		var poolName string
 		var si int
-		var mean, stddev float64
-		var count int
+		var sd slotData
 		var ts time.Time
-		if err := rows.Scan(&poolName, &si, &mean, &stddev, &count, &ts); err != nil {
+		if err := rows.Scan(&poolName, &si, &sd.p25, &sd.median, &sd.p75, &sd.recentMedian, &sd.sampleCount, &ts); err != nil {
 			continue
 		}
 		if byPool[poolName] == nil {
 			byPool[poolName] = map[int]slotData{}
 		}
-		byPool[poolName][si] = slotData{mean: mean, stddev: stddev, sampleCount: count}
-		totalSamples += count
+		byPool[poolName][si] = sd
+		totalSamples += sd.sampleCount
 		if ts.After(updatedAt) {
 			updatedAt = ts
 		}
@@ -251,33 +252,54 @@ func getDailyAvg(c *gin.Context) {
 		}
 	}
 
+	// Median line with a P25–P75 band: the middle half of observed weeks,
+	// with closures excluded by the daily-stats aggregator.  RecentMedian is
+	// the same median over the 28 full days before today only (the live
+	// chart's "lately typical" line).
 	type dataset struct {
-		Label       string    `json:"label"`
-		Data        []float64 `json:"data"`
-		StdDev      []float64 `json:"stddev"`
-		SampleCount []int     `json:"sample_count"`
+		Label        string    `json:"label"`
+		Median       []float64 `json:"median"`
+		P25          []float64 `json:"p25"`
+		P75          []float64 `json:"p75"`
+		RecentMedian []float64 `json:"recent_median"`
+		SampleCount  []int     `json:"sample_count"`
+	}
+
+	// noData marks a slot without a value (no readings, or all on closures).
+	const noData = -1
+	valueOr := func(v sql.NullFloat64) float64 {
+		if !v.Valid {
+			return noData
+		}
+		return v.Float64
 	}
 
 	var datasets []dataset
 	for poolName, slots := range byPool {
 		ds := dataset{
-			Label:       poolName,
-			Data:        make([]float64, len(labels)),
-			StdDev:      make([]float64, len(labels)),
-			SampleCount: make([]int, len(labels)),
+			Label:        poolName,
+			Median:       make([]float64, len(labels)),
+			P25:          make([]float64, len(labels)),
+			P75:          make([]float64, len(labels)),
+			RecentMedian: make([]float64, len(labels)),
+			SampleCount:  make([]int, len(labels)),
 		}
-		for i := range ds.Data {
-			ds.Data[i] = -1 // sentinel: no data
+		for i := range ds.Median {
+			ds.Median[i], ds.P25[i], ds.P75[i], ds.RecentMedian[i] = noData, noData, noData, noData
 		}
 		for si, sd := range slots {
 			if si >= 0 && si < len(labels) {
-				ds.Data[si] = sd.mean
-				ds.StdDev[si] = sd.stddev
+				ds.Median[si] = valueOr(sd.median)
+				ds.P25[si] = valueOr(sd.p25)
+				ds.P75[si] = valueOr(sd.p75)
+				ds.RecentMedian[si] = valueOr(sd.recentMedian)
 				ds.SampleCount[si] = sd.sampleCount
 			}
 		}
 		datasets = append(datasets, ds)
 	}
+	// byPool is a map, so fix the order: the frontend colours pools by index.
+	sort.Slice(datasets, func(i, j int) bool { return datasets[i].Label < datasets[j].Label })
 
 	// Compute date range from raw timestamps, converting to Berlin time.
 	// MIN/MAX aggregates don't carry the DATETIME column type, so go-sqlite3
