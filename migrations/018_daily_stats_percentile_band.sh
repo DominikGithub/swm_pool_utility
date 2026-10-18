@@ -34,7 +34,8 @@
 # Idempotency
 # -----------
 # Safe to run repeatedly: existing columns are skipped and the cache rebuild
-# recomputes every slot.
+# recomputes every slot.  If any step fails, the services are started again
+# before the script exits, so the dashboard is never left down.
 # =============================================================================
 set -euo pipefail
 
@@ -65,6 +66,8 @@ else
   echo "[1/4] Stopping services to prevent concurrent database writes..."
   docker compose stop
   echo "  Services stopped."
+  # From here on, a failed step must not leave the dashboard down.
+  trap 'echo ""; echo "  Migration failed; starting services again so the dashboard stays up..."; docker compose up -d' EXIT
   echo ""
   echo "[2/4] Adding percentile columns to daily_avg_cache..."
 fi
@@ -114,6 +117,7 @@ echo "[3/4] Rebuilding daily_avg_cache with the percentile band..."
 docker compose run --rm --no-deps --entrypoint /app/daily-stats daily-stats --once
 echo "  Cache rebuilt."
 
+trap - EXIT
 echo ""
 echo "[4/4] Starting services..."
 docker compose up -d

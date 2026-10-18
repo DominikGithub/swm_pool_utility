@@ -20,7 +20,10 @@
 #
 #     recent_median_utilization
 #
-# and rebuilds the cache so it fills.  All other columns are unchanged.
+# and rebuilds the cache so it fills.  The aggregator also writes the columns
+# of migration 018 (p25_, median_, p75_utilization), so any of those that are
+# missing are added as well: this migration works on its own, whether or not
+# 018 ran before.  All other columns are unchanged.
 #
 # Usage
 # -----
@@ -30,8 +33,9 @@
 #
 # Idempotency
 # -----------
-# Safe to run repeatedly: an existing column is skipped and the cache rebuild
-# recomputes every slot.
+# Safe to run repeatedly: existing columns are skipped and the cache rebuild
+# recomputes every slot.  If any step fails, the services are started again
+# before the script exits, so the dashboard is never left down.
 # =============================================================================
 set -euo pipefail
 
@@ -62,8 +66,10 @@ else
   echo "[1/4] Stopping services to prevent concurrent database writes..."
   docker compose stop
   echo "  Services stopped."
+  # From here on, a failed step must not leave the dashboard down.
+  trap 'echo ""; echo "  Migration failed; starting services again so the dashboard stays up..."; docker compose up -d' EXIT
   echo ""
-  echo "[2/4] Adding recent_median_utilization to daily_avg_cache..."
+  echo "[2/4] Adding missing statistics columns to daily_avg_cache..."
 fi
 
 docker compose run --rm --no-deps \
@@ -74,20 +80,27 @@ import sys
 
 DRY_RUN = sys.argv[1] == "true"
 DB = os.environ.get("DB_PATH", "/data/swm_pool_utility.db")
-COLUMN = "recent_median_utilization"
+# 018's percentile columns first: the aggregator writes all four.
+COLUMNS = ("p25_utilization", "median_utilization", "p75_utilization", "recent_median_utilization")
 
 conn = sqlite3.connect(DB, timeout=30)
 conn.execute("PRAGMA busy_timeout = 30000")
 try:
     existing = {row[1] for row in conn.execute("PRAGMA table_info(daily_avg_cache)")}
-    if COLUMN in existing:
-        print(f"  {COLUMN} already present; schema is up to date.")
-    elif DRY_RUN:
-        print(f"  {COLUMN} to add.\n\n  Dry run only; schema left unchanged.")
-    else:
-        conn.execute(f"ALTER TABLE daily_avg_cache ADD COLUMN {COLUMN} REAL")
+    missing = [c for c in COLUMNS if c not in existing]
+    for column in COLUMNS:
+        state = "to add" if column in missing else "already present"
+        print(f"  {column:<26s} {state}")
+
+    if DRY_RUN:
+        print("\n  Dry run only; schema left unchanged.")
+    elif missing:
+        for column in missing:
+            conn.execute(f"ALTER TABLE daily_avg_cache ADD COLUMN {column} REAL")
         conn.commit()
-        print(f"  Added {COLUMN}.")
+        print(f"\n  Added {len(missing)} column(s).")
+    else:
+        print("\n  Nothing to add; schema is already up to date.")
 finally:
     conn.close()
 PY
@@ -105,6 +118,7 @@ echo "[3/4] Rebuilding daily_avg_cache with the lately-typical median..."
 docker compose run --rm --no-deps --entrypoint /app/daily-stats daily-stats --once
 echo "  Cache rebuilt."
 
+trap - EXIT
 echo ""
 echo "[4/4] Starting services..."
 docker compose up -d
