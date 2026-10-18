@@ -85,6 +85,7 @@
             :pool="getPoolWithValue(pool)"
             :isFavorite="favorite === pool.name"
             :status="isWeekdayView || !isLive ? null : poolStatuses[pool.name]"
+            :reserveTrend="!isWeekdayView"
             @toggleFavorite="toggleFavorite(pool.name)"
           />
           <WeatherCard v-if="showWeather && !isWeekdayView" :weather="currentWeather" />

@@ -11,17 +11,20 @@
             <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
           </svg>
         </button>
+        <!-- Kept (hidden) when there is no trend so every card has the same
+             height: a row that changed height would resize the chart. -->
         <div
-          v-if="status && status.arrow !== 'stable'"
+          v-if="hasTrend || reserveTrend"
           class="trend-indicator"
-          :class="status.arrow"
-          :title="`Trend: ${status.delta_1h > 0 ? '+' : ''}${status.delta_1h}% in 1h (strength: ${status.trend_strength.toFixed(1)})`"
+          :class="hasTrend ? status.arrow : 'placeholder'"
+          :title="hasTrend ? `Trend: ${status.delta_1h > 0 ? '+' : ''}${status.delta_1h}% in 1h (strength: ${status.trend_strength.toFixed(1)})` : null"
+          :aria-hidden="hasTrend ? null : 'true'"
         >
           <div class="arrow-circle">
-            <span class="arrow-icon" :class="status.arrow">↑</span>
+            <span class="arrow-icon" :class="hasTrend && status.arrow">↑</span>
           </div>
           <div class="strength-bar">
-            <div class="strength-fill" :style="{ width: Math.min(100, status.trend_strength * 5) + '%' }"></div>
+            <div class="strength-fill" :style="{ width: hasTrend ? Math.min(100, status.trend_strength * 5) + '%' : '0%' }"></div>
           </div>
         </div>
       </div>
@@ -35,10 +38,14 @@ import { computed } from 'vue'
 const props = defineProps({
   pool: { type: Object, required: true },
   isFavorite: { type: Boolean, default: false },
-  status: { type: Object, default: null }
+  status: { type: Object, default: null },
+  // False where no trend can ever show (Daily Statistics), so no space is kept.
+  reserveTrend: { type: Boolean, default: true }
 })
 
 defineEmits(['toggleFavorite'])
+
+const hasTrend = computed(() => Boolean(props.status && props.status.arrow !== 'stable'))
 
 const levelClass = computed(() => {
   const v = props.pool.utility
@@ -84,6 +91,10 @@ const levelClass = computed(() => {
   flex-direction: column;
   align-items: center;
   gap: 3px;
+}
+
+.trend-indicator.placeholder {
+  visibility: hidden;
 }
 
 .arrow-circle {
