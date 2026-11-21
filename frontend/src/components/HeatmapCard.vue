@@ -75,10 +75,6 @@
       <div class="key-cell closed"></div>
       <span class="key-label">Closed</span>
     </div>
-    <p v-if="perPool" class="key-note">
-      Each pool's colours span its own usual range (5th to 95th percentile of its half-hour slots);
-      {{ isSinglePool ? 'the range is shown above.' : 'point at a row to see the ranges.' }}
-    </p>
     <div v-if="tooltip.visible" class="tooltip" :style="{ left: tooltip.x + 'px', top: tooltip.y + 'px' }">
       {{ tooltip.text }}
     </div>

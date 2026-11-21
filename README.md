@@ -7,7 +7,7 @@ A monitoring application that tracks historical pool utilization from SWM (Stadt
 ### Heatmap
 ![Heatmap](res/heatmap.png)
 
-The heatmap view shows the typical weekly utilization in 30 minute intervals, based on all readings since recording began or, switchable, on the last 60 days.
+The heatmap view shows the typical weekly utilization in 30 minute intervals, based on all readings since recording began or, switchable, on a rolling season (the last 60 days).
 
 ### Daily Statistics
 ![Daily Statistics](res/dashboard_daily_average_michaelibad.png)
@@ -69,8 +69,8 @@ The "Daily Statistics" option shows the **recurring weekly utilization pattern**
 ### Heatmap
 The heatmap view shows the **weekly utilization pattern** across 30min time slots:
 - Each cell is the **median** utilization of the readings in that weekday and 30-minute slot (Berlin time, correct in summer and winter time)
-- Two switches next to the view selector, shown only in the heatmap view and remembered per browser:
-  - **All data / 60 days** (time horizon): _All data_ (default) uses every reading since recording began; _60 days_ only the last 60 days, so the pattern follows the current season — the pools are noticeably quieter in autumn than in spring and summer. Outdoor pools that are closed for the season have no readings in the 60-day view
+- Two switches next to the view selector, shown only in the heatmap view and remembered per browser; a hover tip on each button explains it, and one small line under the switches says what is shown. On phones the switches and a compact ↻ refresh button share one row
+  - **All time / Season** (time horizon): _All time_ (default) uses every reading since recording began; _Season_ is a rolling window of the last 60 days, so the pattern follows the current time of year — the pools are noticeably quieter in autumn than in spring and summer. Outdoor pools that are closed for the season have no readings in the Season view
   - **Fixed / Per pool** (colour scale), Green (quiet) → Yellow → Red (busy):
     - _Fixed_ (default): the same bands for every pool (<12%, 12–18%, 18–25%, 25–35%, 35–60%, ≥60% full), so a colour means the same crowd in every pool and the pools can be compared; one legend below the heatmap
     - _Per pool_: the six colours span each pool's own usual range, from the 5th to the 95th percentile of its open half-hour cells. The 5% quietest cells (typically the first half hour after opening) and the 5% busiest (typically weekend afternoons) are clipped to the end colours instead of stretching the scale, so the rest of the week keeps its contrast — e.g. Michaelibad: 8–60% instead of 0–80%. Quiet and busy times then also show in a pool that is never crowded, such as the Dante-Winter-Warmfreibad (2–10%). Each pool has its own legend with the range and colour boundaries, e.g. `≤2% … ≥10% full`; it opens for the row of pools under the mouse pointer (tap on touch screens) and is always shown when a single pool is selected
