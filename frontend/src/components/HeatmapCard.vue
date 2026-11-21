@@ -6,9 +6,17 @@
       :class="{ 'single-pool': isSinglePool }"
       @mousemove="onGridPointer"
       @click="onGridPointer"
-      @mouseleave="openRow = ''"
+      @mouseleave="onGridLeave"
     >
       <div v-for="poolData in poolDataList" :key="poolData.pool" class="pool-heatmap" :data-pool="poolData.pool">
+        <!-- While the pointer is over the other pool of this row, this slot shows that pool's histogram. -->
+        <template v-if="histogramIn(poolData.pool)">
+          <div class="pool-header hist-header">
+            <span class="hist-arrow">{{ inspected.arrows[poolData.pool] }}</span>{{ inspected.pool }}<span class="hist-sub"> · {{ statsLine(inspected.pool) }}</span>
+          </div>
+          <PoolHistogram v-bind="histogramProps(inspected.pool)" />
+        </template>
+        <template v-else>
         <div class="pool-header">
           <svg v-if="poolData.type === 'outdoor'" class="pool-type-icon outdoor" viewBox="0 0 16 16" role="img" aria-label="Outdoor pool (Freibad)">
             <title>Outdoor pool (Freibad)</title>
@@ -58,14 +66,32 @@
                 >{{ tick }}</span>
               </div>
               <span class="key-label">≥{{ fmt(poolScales[poolData.pool].hi) }}% full</span>
+              <!-- Single pool: the global key below is hidden, so the closed swatch moves here. -->
+              <template v-if="isSinglePool">
+                <span class="key-separator">|</span>
+                <div class="key-cell closed"></div>
+                <span class="key-label">Closed</span>
+              </template>
             </div>
             <p v-else class="key-note">No open readings in this period</p>
           </div>
         </div>
+        </template>
+      </div>
+      <!-- Spare slot: next to the last pool of an odd row (wide screens), showing its
+           histogram on hover, and below a single selected pool, where it always shows. -->
+      <div v-if="hasSpare" class="pool-heatmap spare" :data-pool="SPARE">
+        <template v-if="sparePool">
+          <div class="pool-header hist-header">
+            <span class="hist-arrow">{{ isSinglePool ? '▲' : '◀' }}</span>{{ sparePool }}<span class="hist-sub"> · {{ statsLine(sparePool) }}</span>
+          </div>
+          <PoolHistogram v-bind="histogramProps(sparePool)" />
+        </template>
       </div>
     </div>
-    <!-- "key", not "legend": style.css hides every div whose class contains "legend". -->
-    <div class="heatmap-key">
+    <!-- "key", not "legend": style.css hides every div whose class contains "legend".
+         Hidden for a single pool in per-pool mode, where that pool's own key is shown. -->
+    <div v-if="!(perPool && isSinglePool)" class="heatmap-key">
       <span class="key-label">{{ perPool ? 'Quiet for the pool' : 'Low crowds' }}</span>
       <div class="key-scale">
         <div v-for="level in 6" :key="level" class="key-cell" :class="`level-${level - 1}`"></div>
@@ -83,6 +109,7 @@
 
 <script setup>
 import { computed, ref } from 'vue'
+import PoolHistogram from './PoolHistogram.vue'
 
 const props = defineProps({
   data: { type: Array, default: () => [] },
@@ -235,26 +262,31 @@ const CLIP = 0.05
 const perPool = computed(() => props.scaleMode === 'pool')
 const isSinglePool = computed(() => poolDataList.value.length === 1)
 
-function percentileRange(poolData) {
-  const occupancy = []
+// Occupancy of a pool's open cells (sorted) and its percentiles: the input of
+// both the per-pool colour range and the histogram.
+function cellStats(poolData) {
+  const values = []
   for (let d = 0; d < 7; d++) {
     for (let s = 0; s < 48; s++) {
       const state = cellState(poolData, d, s)
-      if (typeof state === 'number') occupancy.push(state)
+      if (typeof state === 'number') values.push(state)
     }
   }
-  if (occupancy.length === 0) return null
-  occupancy.sort((a, b) => a - b)
-  const quantile = p => occupancy[Math.min(occupancy.length - 1, Math.floor(p * occupancy.length))]
+  if (values.length === 0) return { values, n: 0 }
+  values.sort((a, b) => a - b)
+  const quantile = p => values[Math.min(values.length - 1, Math.floor(p * values.length))]
   const lo = quantile(CLIP)
   const hi = quantile(1 - CLIP)
-  return { lo, hi: hi > lo ? hi : lo + 1 } // all cells equal: avoid a zero-width range
+  // all cells equal: avoid a zero-width range
+  return { values, n: values.length, median: quantile(0.5), lo, hi: hi > lo ? hi : lo + 1 }
 }
+
+const poolStats = computed(() => Object.fromEntries(poolDataList.value.map(p => [p.pool, cellStats(p)])))
 
 // pool name → { lo, hi } in % full, or null when the pool has no open cells.
 const poolScales = computed(() => {
   if (!perPool.value) return {}
-  return Object.fromEntries(poolDataList.value.map(p => [p.pool, percentileRange(p)]))
+  return Object.fromEntries(Object.entries(poolStats.value).map(([pool, s]) => [pool, s.n ? { lo: s.lo, hi: s.hi } : null]))
 })
 
 function levelFor(occupancy, pool) {
@@ -277,24 +309,79 @@ function ticks(range) {
 }
 
 // ---------------------------------------------------------------------------
-// Per-pool keys open for the row of pools under the pointer (two pools per
-// row on wide screens, one on narrow ones) and close again when the pointer
-// leaves the heatmap or moves to another row. The row is found by height, so
-// the gap between the two pools of a row does not close it.
+// Pointer over the grid (rows are found by height, so the gap between the
+// two pools of a row keeps the row):
+//
+// - Per-pool keys open for the row of pools under the pointer (two pools per
+//   row on wide screens, one on narrow ones).
+// - The pool slot under the pointer is "inspected": its row partner shows the
+//   inspected pool's histogram instead of its own heatmap, so moving across a
+//   row flips the two sides. A pool alone in the last row of an odd count uses
+//   the spare slot next to it. One pool per row (narrow screens): no partner.
+//
+// Both reset when the pointer leaves the grid or is between two rows.
 // ---------------------------------------------------------------------------
+const SPARE = '__spare__'
 const gridEl = ref(null)
 const openRow = ref('') // names of the pools in the open row, joined by '\n'
 const openPools = computed(() => new Set(openRow.value ? openRow.value.split('\n') : []))
+const inspected = ref(null) // { pool, arrows: { slot name → '◀' | '▶' toward the pool } }
+
+const hasSpare = computed(() => isSinglePool.value || poolDataList.value.length % 2 === 1)
+// The spare slot always shows the single selected pool; otherwise only on hover.
+const sparePool = computed(() => (isSinglePool.value ? poolDataList.value[0]?.pool : histogramIn(SPARE) ? inspected.value.pool : null))
+
+function histogramIn(slot) {
+  return Boolean(inspected.value && slot in inspected.value.arrows)
+}
+
+function histogramProps(pool) {
+  const s = poolStats.value[pool]
+  return { values: s.values, stats: s.n ? s : null, clipped: perPool.value, level: v => levelFor(v, pool), height: HISTOGRAM_HEIGHT }
+}
+
+function statsLine(pool) {
+  const s = poolStats.value[pool]
+  if (!s.n) return 'no open readings'
+  const clip = perPool.value ? ` · p5 ${fmt(s.lo)}% · p95 ${fmt(s.hi)}%` : ''
+  return `${s.n} half-hour slots · median ${fmt(s.median)}%${clip}`
+}
+
+// Height of a heatmap body — 7 rows of 18px + 2px gap + 11px hour labels (fixed
+// line-height in .x-label) — so a histogram can replace it without moving the layout.
+const HISTOGRAM_HEIGHT = 7 * 18 + 2 + 11
 
 function onGridPointer(event) {
-  if (!perPool.value || isSinglePool.value || !gridEl.value) return
-  const items = [...gridEl.value.querySelectorAll('.pool-heatmap')]
-  const hit = items.find(el => {
+  if (isSinglePool.value || !gridEl.value) return
+  const items = [...gridEl.value.querySelectorAll('.pool-heatmap')].filter(el => el.offsetParent !== null)
+  const inRow = items.find(el => {
     const r = el.getBoundingClientRect()
     return event.clientY >= r.top && event.clientY <= r.bottom
   })
-  const row = hit ? items.filter(el => el.offsetTop === hit.offsetTop).map(el => el.dataset.pool).join('\n') : ''
+  const rowItems = inRow ? items.filter(el => el.offsetTop === inRow.offsetTop) : []
+
+  const row = perPool.value ? rowItems.map(el => el.dataset.pool).filter(p => p !== SPARE).join('\n') : ''
   if (row !== openRow.value) openRow.value = row
+
+  if (!inRow) {
+    inspected.value = null
+    return
+  }
+  const self = rowItems.find(el => {
+    const r = el.getBoundingClientRect()
+    return event.clientX >= r.left && event.clientX <= r.right
+  })
+  if (!self || self.dataset.pool === SPARE || self.dataset.pool === inspected.value?.pool) return // gap or histogram: keep
+  const mates = rowItems.filter(el => el !== self)
+  inspected.value = {
+    pool: self.dataset.pool,
+    arrows: Object.fromEntries(mates.map(el => [el.dataset.pool, el.offsetLeft > self.offsetLeft ? '◀' : '▶'])),
+  }
+}
+
+function onGridLeave() {
+  openRow.value = ''
+  inspected.value = null
 }
 
 function formatTime(slotIdx) {
@@ -440,6 +527,7 @@ function hideTooltip() {
 .x-label {
   flex: 1 1 0;
   font-size: 0.6rem;
+  line-height: 11px; /* fixed, so HISTOGRAM_HEIGHT matches the heatmap body exactly */
   color: #666;
   text-align: center;
   min-width: 0;
@@ -524,6 +612,30 @@ function hideTooltip() {
   font-size: 0.6rem;
   color: #888;
   white-space: nowrap;
+}
+
+/* Histogram standing in for a heatmap: one-line header, same height as a pool header. */
+.hist-header {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hist-arrow {
+  color: #0066cc;
+  margin-right: 0.35em;
+}
+
+.hist-sub {
+  font-weight: 400;
+  color: #666;
+}
+
+/* One pool per row: no partner to swap with, so the spare slot is only for a single selected pool. */
+@media (max-width: 900px) {
+  .heatmap-grid:not(.single-pool) .spare {
+    display: none;
+  }
 }
 
 @media (max-width: 900px) {
