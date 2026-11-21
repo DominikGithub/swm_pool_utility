@@ -155,38 +155,60 @@ func canonicalPoolName(name string) string {
 	return poolNameReplacer.Replace(strings.TrimSpace(name))
 }
 
+// canonicalPoolNameSQL is canonicalPoolName as an SQL expression over
+// pools.name (char(8216) = ‘, char(8217) = ’), so a lookup also matches rows
+// stored under an older spelling.  Keep both in sync.
+const canonicalPoolNameSQL = "replace(replace(trim(name), char(8216), ''''), char(8217), '''')"
+
 func initDB() {
 	dbPath := os.Getenv("DB_PATH")
 	if dbPath == "" {
 		dbPath = "/data/swm_pool_utility.db"
 	}
 
+	// Wait for a briefly locked database instead of failing at once.
 	var err error
-	db, err = sql.Open("sqlite3", dbPath)
+	db, err = sql.Open("sqlite3", dbPath+"?_busy_timeout=5000")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	loadPoolIDs()
+	if err := loadPoolIDs(); err != nil {
+		log.Fatalf("could not load pool IDs: %v", err)
+	}
 }
 
 // loadPoolIDs reads all existing pools into the in-memory cache.
-func loadPoolIDs() {
-	rows, err := db.Query("SELECT id, name FROM pools")
+//
+// A failure is returned instead of carrying on with an empty cache: on
+// 2026-11-21 that let getOrCreatePoolID insert "Müller'sches Volksbad" next
+// to the stored "Müller’sches Volksbad", and every later run then wrote the
+// readings to the new, empty pool (repaired by migration 020).
+func loadPoolIDs() error {
+	rows, err := db.Query("SELECT id, name FROM pools ORDER BY id")
 	if err != nil {
-		// Table may not exist yet on a brand-new DB — not fatal.
-		log.Printf("warning: could not load pool IDs: %v", err)
-		return
+		if strings.Contains(err.Error(), "no such table") {
+			// Brand-new DB before db-init has run: nothing to cache yet.
+			log.Printf("warning: pools table not found, starting with no pool IDs")
+			return nil
+		}
+		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var id int64
 		var name string
 		if err := rows.Scan(&id, &name); err != nil {
-			continue
+			return err
 		}
-		poolIDs[canonicalPoolName(name)] = id
+		// Rows differing only in typography share one key: keep the oldest,
+		// which holds the history.
+		key := canonicalPoolName(name)
+		if _, seen := poolIDs[key]; !seen {
+			poolIDs[key] = id
+		}
 	}
+	return rows.Err()
 }
 
 // getOrCreatePoolID returns the pools.id for name, inserting a new row if this
@@ -196,12 +218,24 @@ func getOrCreatePoolID(name string) (int64, error) {
 	if id, ok := poolIDs[name]; ok {
 		return id, nil
 	}
+	// Not cached: the pool may still exist under another spelling.  Look it
+	// up by canonical name before creating a new identity for it.
+	var id int64
+	err := db.QueryRow(
+		"SELECT id FROM pools WHERE "+canonicalPoolNameSQL+" = ? ORDER BY id LIMIT 1", name,
+	).Scan(&id)
+	if err == nil {
+		poolIDs[name] = id
+		return id, nil
+	}
+	if err != sql.ErrNoRows {
+		return 0, fmt.Errorf("lookup pool %q: %w", name, err)
+	}
 	// INSERT OR IGNORE is safe to call concurrently (single goroutine here, but
 	// harmless even if called twice due to restart races).
 	if _, err := db.Exec("INSERT OR IGNORE INTO pools(name) VALUES (?)", name); err != nil {
 		return 0, fmt.Errorf("insert pool %q: %w", name, err)
 	}
-	var id int64
 	if err := db.QueryRow("SELECT id FROM pools WHERE name = ?", name).Scan(&id); err != nil {
 		return 0, fmt.Errorf("lookup pool %q: %w", name, err)
 	}

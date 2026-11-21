@@ -153,6 +153,76 @@ func addSample(t *testing.T, pool, dtime string, utility int) {
 	}
 }
 
+func poolCount(t *testing.T) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRow("SELECT COUNT(*) FROM pools").Scan(&n); err != nil {
+		t.Fatalf("count pools: %v", err)
+	}
+	return n
+}
+
+// The 2026-11-21 split: the pool is stored as "Müller’sches Volksbad" and the
+// ID cache is empty (loading it failed).  The canonical "Müller'sches Volksbad"
+// must still resolve to the stored row instead of creating a second pool.
+func TestGetOrCreatePoolIDFindsOtherSpellingWithoutCache(t *testing.T) {
+	newTestDB(t, "Müller’sches Volksbad")
+	poolIDs = map[string]int64{}
+
+	id, err := getOrCreatePoolID("Müller'sches Volksbad")
+	if err != nil {
+		t.Fatalf("getOrCreatePoolID: %v", err)
+	}
+	if id != 1 {
+		t.Fatalf("id = %d, want 1 (the stored row)", id)
+	}
+	if n := poolCount(t); n != 1 {
+		t.Fatalf("pools = %d, want 1 (no duplicate)", n)
+	}
+}
+
+func TestGetOrCreatePoolIDCreatesUnknownPool(t *testing.T) {
+	newTestDB(t, "Nordbad")
+	id, err := getOrCreatePoolID("Westbad")
+	if err != nil {
+		t.Fatalf("getOrCreatePoolID: %v", err)
+	}
+	if id != 2 || poolCount(t) != 2 {
+		t.Fatalf("id = %d, pools = %d, want a new pool with id 2", id, poolCount(t))
+	}
+}
+
+// With both spellings stored, the oldest row (the one with the history) must
+// win regardless of row order, instead of the newer duplicate.
+func TestLoadPoolIDsPrefersOldestRowOfSameCanonicalName(t *testing.T) {
+	newTestDB(t)
+	for _, p := range []struct {
+		id   int64
+		name string
+	}{{18, "Müller'sches Volksbad"}, {5, "Müller’sches Volksbad"}} {
+		if _, err := db.Exec("INSERT INTO pools(id, name) VALUES (?, ?)", p.id, p.name); err != nil {
+			t.Fatalf("insert pool: %v", err)
+		}
+	}
+
+	if err := loadPoolIDs(); err != nil {
+		t.Fatalf("loadPoolIDs: %v", err)
+	}
+	if got := poolIDs["Müller'sches Volksbad"]; got != 5 {
+		t.Fatalf("cached id = %d, want 5 (oldest row)", got)
+	}
+}
+
+func TestLoadPoolIDsReportsQueryFailure(t *testing.T) {
+	newTestDB(t)
+	if _, err := db.Exec("DROP TABLE pools; CREATE TABLE pools(id INTEGER PRIMARY KEY)"); err != nil {
+		t.Fatalf("break schema: %v", err)
+	}
+	if err := loadPoolIDs(); err == nil {
+		t.Fatal("loadPoolIDs returned nil for a failing query, want an error")
+	}
+}
+
 // A partial glitch: only some pools read 0, so validatePoolStats cannot see it,
 // but no pool goes from 93% free capacity to completely full in ten minutes.
 func TestDropImplausibleZerosRemovesPartialGlitch(t *testing.T) {

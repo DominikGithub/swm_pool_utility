@@ -235,6 +235,19 @@ function setCookie(name, value, days = 365) {
   document.cookie = name + '=' + encodeURIComponent(value) + '; expires=' + expires + '; path=/'
 }
 
+// Same folding as pool-scraper's canonicalPoolName, so a favourite saved under
+// an older spelling ("Müller’sches Volksbad", renamed by migration 020) still
+// finds its pool.
+const canonicalPoolName = name => name.trim().replace(/[‘’]/g, "'")
+
+function loadFavorite() {
+  const saved = getCookie('swm_favorite') || ''
+  if (!saved) return ''
+  const match = pools.value.find(p => canonicalPoolName(p) === canonicalPoolName(saved))
+  if (match && match !== saved) setCookie('swm_favorite', match)
+  return match ?? saved
+}
+
 function toggleFavorite(poolName) {
   if (favorite.value === poolName) {
     favorite.value = ''
@@ -686,7 +699,7 @@ async function toggleWeather() {
 onMounted(async () => {
   loadOverview()
   pools.value = await fetchPools()
-  favorite.value = getCookie('swm_favorite') || ''
+  favorite.value = loadFavorite()
   selectedPool.value = favorite.value
   await fetchData()
   if (showWeather.value && weatherData.value.length === 0) {

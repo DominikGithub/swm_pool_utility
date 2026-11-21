@@ -92,7 +92,7 @@ erDiagram
 - **Timestamps** are stored as UTC text in the form `YYYY-MM-DD HH:MM:SS`. The writers set them explicitly; conversion to Europe/Berlin happens at read time in the API and the aggregator. The one exception is `daily_avg_cache.slot_index`, which is computed in Berlin wall-clock time.
 - **`utility` vs. utilization.** `track_pools.utility` stores what SWM reports: *capacity remaining*, where 100 means empty or closed. Every derived value (`daily_avg_cache.*_utilization`, all `predictions` columns) is *utilization*, `100 − utility`, where 100 means full.
 - **Closed pools** are stored as `utility = 100`. Some pools report 0 when closed; the scraper maps that to 100 before inserting.
-- **Pool names** are normalised to one canonical spelling by the scraper (migration 007), because `predictions` and the API match pools by name.
+- **Pool names** are normalised to one canonical spelling by the scraper (migration 007), because `predictions` and the API match pools by name. The canonical form folds the typographic apostrophes ‘ and ’ to a plain `'`, and the stored names use that form (migration 020), e.g. `Müller'sches Volksbad`.
 
 ## Table notes
 
@@ -183,3 +183,4 @@ Flags differ between scripts: 007–011 expect `--up`, 001 `--rebuild`, and 014 
 | 017 | data | Remove false-empty ("closed") glitch samples |
 | 018 | schema | Add `p25_`, `median_`, `p75_utilization` to `daily_avg_cache` |
 | 019 | schema | Add `recent_median_utilization` to `daily_avg_cache` |
+| 020 | data | Merge pools whose names differ only in apostrophes (the split `Müller'sches` / `Müller’sches Volksbad`) and store the canonical spelling |
