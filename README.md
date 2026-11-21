@@ -4,7 +4,7 @@ A monitoring application that tracks historical pool utilization from SWM (Stadt
 
 [![Pool Dashboard](res/pool_dashboard_20260412_1.png)](http://grid.resolve.bar:8086/)
 
-The chart here is moved back to 10–12 April 2026 with the time navigator below it, which shows one bar per day over the whole recorded history.
+The live view as of Sunday 12 April 2026, 13:40: the last 3 days, dashed 2-hour forecasts and trend arrows in the pool tiles. Below the chart, the time navigator shows one bar per recorded day; drag it to look at an earlier period. The forecasts in this screenshot are an illustrative stand-in (the current value plus the usual Sunday shape), not output of the prediction model.
 
 ### Heatmap
 ![Heatmap](res/heatmap.png)
