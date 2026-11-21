@@ -1,8 +1,8 @@
-FROM python:3.12-slim
+FROM python:3.12.16-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install --no-install-recommends -y \
+RUN apt-get update && apt-get upgrade -y && apt-get install --no-install-recommends -y \
     gcc \
     libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/*

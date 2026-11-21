@@ -1,4 +1,4 @@
-FROM golang:1.21-bookworm AS builder
+FROM golang:1.27.4-trixie AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
@@ -10,9 +10,9 @@ COPY go.mod ./
 RUN go mod tidy
 RUN CGO_ENABLED=1 GOOS=linux go build -o scraper
 
-FROM debian:bookworm-slim
+FROM debian:13.7-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     chromium \
     chromium-sandbox \
     libsqlite3-0 \

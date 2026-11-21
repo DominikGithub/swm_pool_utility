@@ -1,6 +1,6 @@
 services:
   db-init:
-    image: debian:12.9-slim
+    image: debian:13.7-slim
     volumes:
       - db_data:/data
     command: >

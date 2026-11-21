@@ -1,4 +1,4 @@
-FROM golang:1.21-bookworm AS builder
+FROM golang:1.27.4-trixie AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
@@ -10,8 +10,8 @@ RUN go mod download
 COPY *.go ./
 RUN CGO_ENABLED=1 GOOS=linux go build -o api .
 
-FROM debian:12.9-slim
-RUN apt-get update && apt-get install -y --no-install-recommends \
+FROM debian:13.7-slim
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     ca-certificates \
     libsqlite3-0 \
     wget \

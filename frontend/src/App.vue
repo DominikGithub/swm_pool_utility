@@ -58,17 +58,20 @@
             @click="setHeatmapDays(0)"
           >All time</button>
           <button
-            :class="{ active: heatmapDays === SEASON_DAYS }"
-            :aria-pressed="heatmapDays === SEASON_DAYS"
-            :title="`Season: a rolling window of the last ${SEASON_DAYS} days, so the pattern follows the current time of year`"
-            @click="setHeatmapDays(SEASON_DAYS)"
-          >Season</button>
+            :class="{ active: heatmapDays === RECENT_DAYS }"
+            :aria-pressed="heatmapDays === RECENT_DAYS"
+            :title="`Recent: a rolling window of the last ${RECENT_DAYS} days up to today, so the pattern follows the current time of year`"
+            @click="setHeatmapDays(RECENT_DAYS)"
+          >Recent</button>
         </div>
       </template>
     </div>
     <p v-if="isHeatmapView" class="heatmap-caption">{{ heatmapCaption }}</p>
 
-    <div v-if="loading" class="loading">Loading...</div>
+    <div v-if="loading" class="loading" role="status" aria-live="polite">
+      <span class="spinner" aria-hidden="true"></span>
+      <span>{{ isHeatmapView ? 'Loading heatmap…' : 'Loading…' }}</span>
+    </div>
     <template v-else>
       <div v-if="isHeatmapView" class="chart-container">
         <HeatmapCard
@@ -161,15 +164,15 @@ const hoverData = ref(null)
 const hoverInfo = ref(null)
 const showWeather = ref(localStorage.getItem('swm_showWeather') === 'true')
 // Heatmap options (remembered per browser): colour scale 'fixed' | 'pool',
-// time range 0 = all time or SEASON_DAYS = rolling season.
-const SEASON_DAYS = 60
+// time range 0 = all time or RECENT_DAYS = recent rolling window.
+const RECENT_DAYS = 60
 const heatmapScale = ref(localStorage.getItem('swm_heatmapScale') === 'pool' ? 'pool' : 'fixed')
-const heatmapDays = ref(localStorage.getItem('swm_heatmapDays') === String(SEASON_DAYS) ? SEASON_DAYS : 0)
+const heatmapDays = ref(localStorage.getItem('swm_heatmapDays') === String(RECENT_DAYS) ? RECENT_DAYS : 0)
 // One short line under the switches saying what the heatmap currently shows.
 const heatmapCaption = computed(() => {
   const range = heatmapDays.value === 0
     ? 'All time: every reading since recording began'
-    : `Rolling season: the last ${SEASON_DAYS} days`
+    : 'Recent rolling window'
   const scale = heatmapScale.value === 'fixed'
     ? 'Same colour bands for every pool'
     : `Each pool's own range (5th–95th percentile)${selectedPool.value ? '' : ', point at a pool to see it'}`
@@ -582,6 +585,9 @@ async function fetchData({ quiet = false } = {}) {
     const isHeatmap = selectedDays.value === 'heatmap'
 
     if (isHeatmap) {
+      // Drop the previous range's/pool's grid, so it can never be mistaken for
+      // the new one (also if the request fails).
+      hourlyData.value = []
       const data = await fetchHourlyAvg(selectedPool.value, heatmapDays.value)
       if (seq !== fetchSeq) return
       hourlyData.value = data
@@ -660,7 +666,9 @@ function setHeatmapDays(days) {
   if (heatmapDays.value === days) return
   heatmapDays.value = days
   localStorage.setItem('swm_heatmapDays', String(days))
-  fetchData({ quiet: true })
+  // Not quiet: the all-time query takes a while, so show the spinner instead
+  // of leaving the old range's heatmap on screen.
+  fetchData()
 }
 
 async function toggleWeather() {
