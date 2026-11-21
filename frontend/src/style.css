@@ -53,8 +53,11 @@ header h1 {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 28px;
+  height: 28px;
+  /* Hang into the header padding so the bar keeps the height of the title
+     alone, as before the link existed (the title line is ~19–24px tall). */
+  margin-block: -6px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.1);
   flex-shrink: 0;
@@ -73,8 +76,8 @@ header h1 {
 }
 
 .github-link svg {
-  width: 24px;
-  height: 24px;
+  width: 18px;
+  height: 18px;
   fill: currentColor;
 }
 

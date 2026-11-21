@@ -38,21 +38,18 @@
         </div>
       </div>
     </div>
-    <div class="heatmap-legend">
-      <span class="legend-label">Low crowds</span>
-      <div class="legend-scale">
-        <div class="legend-cell level-0"></div>
-        <div class="legend-cell level-1"></div>
-        <div class="legend-cell level-2"></div>
-        <div class="legend-cell level-3"></div>
-        <div class="legend-cell level-4"></div>
-        <div class="legend-cell level-5"></div>
+    <!-- "key", not "legend": style.css hides every div whose class contains "legend". -->
+    <div class="heatmap-key">
+      <span class="key-label">{{ scale ? `≤${Math.round(scale.lo)}%` : 'Low crowds' }}</span>
+      <div class="key-scale">
+        <div v-for="level in 6" :key="level" class="key-cell" :class="`level-${level - 1}`"></div>
       </div>
-      <span class="legend-label">High crowds</span>
-      <span class="legend-separator">|</span>
-      <div class="legend-cell closed"></div>
-      <span class="legend-label">Closed</span>
+      <span class="key-label">{{ scale ? `≥${Math.round(scale.hi)}% full` : 'High crowds' }}</span>
+      <span class="key-separator">|</span>
+      <div class="key-cell closed"></div>
+      <span class="key-label">Closed</span>
     </div>
+    <p v-if="scale" class="key-note">Colours span this pool's own usual range, so quiet and busy times stand out even when it is never crowded.</p>
     <div v-if="tooltip.visible" class="tooltip" :style="{ left: tooltip.x + 'px', top: tooltip.y + 'px' }">
       {{ tooltip.text }}
     </div>
@@ -172,7 +169,9 @@ const poolDataList = computed(() => {
     .map(([pool, grid]) => ({ pool, grid, type: getEntry(pool)?.type ?? null }))
 })
 
-function getCellClass(poolData, dayIdx, slotIdx) {
+// Returns the occupancy (% full) of an open cell with enough data, or the
+// reason it has no colour: 'closed' or 'no-data'.
+function cellState(poolData, dayIdx, slotIdx) {
   // 1. Official schedule: outside opening hours → closed
   if (isScheduleClosed(poolData.pool, dayIdx, slotIdx)) return 'closed'
 
@@ -182,13 +181,53 @@ function getCellClass(poolData, dayIdx, slotIdx) {
   // 2. Statistical detection: most samples at 100% → closed (holidays, etc.)
   if (cell.closedFraction >= 0.9) return 'closed'
 
-  const util = 100 - cell.mean
-  if (util < 12) return 'level-0'
-  if (util < 18) return 'level-1'
-  if (util < 25) return 'level-2'
-  if (util < 35) return 'level-3'
-  if (util < 60) return 'level-4'
-  return 'level-5'
+  return 100 - cell.mean
+}
+
+// ---------------------------------------------------------------------------
+// Colour scale
+//
+// All pools: fixed occupancy bands, so the same colour means the same crowd
+// in every pool and the pools can be compared.
+//
+// One pool selected: the six colours span that pool's own usual range, from
+// the 5th to the 95th percentile of its cells (the few most extreme cells
+// would otherwise stretch the scale and flatten everything else). A pool
+// that is never busy, like the Dante-Winter-Warmfreibad in autumn at 2–9%,
+// would be a single shade of green on the fixed bands. The range is at least
+// MIN_SPAN points wide so that a 1–2 point wobble in an almost empty pool
+// does not flip colours.
+// ---------------------------------------------------------------------------
+const FIXED_BANDS = [12, 18, 25, 35, 60]
+const MIN_SPAN = 12
+
+const scale = computed(() => {
+  if (poolDataList.value.length !== 1) return null
+  const poolData = poolDataList.value[0]
+  const occupancy = []
+  for (let d = 0; d < 7; d++) {
+    for (let s = 0; s < 48; s++) {
+      const state = cellState(poolData, d, s)
+      if (typeof state === 'number') occupancy.push(state)
+    }
+  }
+  if (occupancy.length === 0) return null
+  occupancy.sort((a, b) => a - b)
+  const quantile = p => occupancy[Math.min(occupancy.length - 1, Math.floor(p * occupancy.length))]
+  const lo = quantile(0.05)
+  return { lo, hi: Math.max(quantile(0.95), lo + MIN_SPAN) }
+})
+
+function levelFor(occupancy) {
+  const s = scale.value
+  if (s) return Math.min(5, Math.max(0, Math.floor((occupancy - s.lo) / (s.hi - s.lo) * 6)))
+  const band = FIXED_BANDS.findIndex(limit => occupancy < limit)
+  return band === -1 ? 5 : band
+}
+
+function getCellClass(poolData, dayIdx, slotIdx) {
+  const state = cellState(poolData, dayIdx, slotIdx)
+  return typeof state === 'number' ? `level-${levelFor(state)}` : state
 }
 
 function formatTime(slotIdx) {
@@ -339,42 +378,50 @@ function hideTooltip() {
   min-width: 0;
 }
 
-.heatmap-legend {
+.heatmap-key {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-wrap: wrap;
   gap: 0.5rem;
   margin-top: 1rem;
 }
 
-.legend-label {
+.key-label {
   font-size: 0.7rem;
   color: #666;
 }
 
-.legend-scale {
+.key-scale {
   display: flex;
   gap: 2px;
 }
 
-.legend-cell {
+.key-cell {
   width: 24px;
   height: 12px;
   border-radius: 2px;
 }
 
-.legend-cell.level-0 { background: #15803d; }
-.legend-cell.level-1 { background: #22c55e; }
-.legend-cell.level-2 { background: #86efac; }
-.legend-cell.level-3 { background: #fde047; }
-.legend-cell.level-4 { background: #fb923c; }
-.legend-cell.level-5 { background: #ef4444; }
-.legend-cell.closed  { background: #d1d5db; }
+.key-cell.level-0 { background: #15803d; }
+.key-cell.level-1 { background: #22c55e; }
+.key-cell.level-2 { background: #86efac; }
+.key-cell.level-3 { background: #fde047; }
+.key-cell.level-4 { background: #fb923c; }
+.key-cell.level-5 { background: #ef4444; }
+.key-cell.closed  { background: #d1d5db; }
 
-.legend-separator {
+.key-separator {
   color: #ccc;
   font-size: 0.8rem;
   margin: 0 0.15rem;
+}
+
+.key-note {
+  margin-top: 0.35rem;
+  font-size: 0.7rem;
+  color: #888;
+  text-align: center;
 }
 
 @media (max-width: 900px) {

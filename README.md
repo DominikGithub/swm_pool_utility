@@ -7,7 +7,7 @@ A monitoring application that tracks historical pool utilization from SWM (Stadt
 ### Heatmap
 ![Heatmap](res/heatmap.png)
 
-The heatmap view shows utilization patterns in 30 minute intervals (based on data over last 60 days).
+The heatmap view shows the typical weekly utilization in 30 minute intervals, based on the readings of the last 60 days.
 
 ### Daily Statistics
 ![Daily Statistics](res/dashboard_daily_average_michaelibad.png)
@@ -68,8 +68,12 @@ The "Daily Statistics" option shows the **recurring weekly utilization pattern**
 
 ### Heatmap
 The heatmap view shows the **weekly utilization pattern** across 30min time slots:
-- **Colors**: Green (low crowds) → Yellow → Red (high crowds)
-- **Gray cells**: Pool is closed or insufficient data
+- **Time horizon:** the readings of the **last 60 days** (Berlin time), so the pattern follows the season; the pools are noticeably quieter in autumn than in spring and summer. Each cell is the **median** utilization of the readings in that weekday and 30-minute slot (about 26 readings)
+- **Colors**: Green (low crowds) → Yellow → Red (high crowds); one legend below the heatmap
+  - _All pools_: fixed bands (<12%, 12–18%, 18–25%, 25–35%, 35–60%, ≥60% full), so a colour means the same crowd in every pool
+  - _Single pool_: the six colours span that pool's own usual range (5th–95th percentile of its cells, at least 12 points wide), and the legend shows the range, e.g. `≤2% … ≥14% full`. Quiet and busy times then stand out even in a pool that is never crowded, such as the Dante-Winter-Warmfreibad in autumn
+- **Gray cells**: outside the opening hours in `frontend/src/data/pool-opening-hours.json`, fewer than 5 readings, or at least 90% of the readings show the pool as closed
+- **Tooltip**: the cell's utilization and number of readings
 - **Icon next to the pool name**: orange sun = outdoor pool (Freibad), blue roof over water = indoor pool (Hallenbad). The type is set per pool in `frontend/src/data/pool-opening-hours.json` (`"type": "outdoor"` / `"indoor"`)
 
 ### Pool cards
@@ -133,6 +137,7 @@ Fetches 7-day weather forecast from [Open-Meteo Forecast API](https://open-meteo
 | Open-Meteo API (source) | ISO 8601 | Europe/Berlin (requested via `&timezone=`) | `2026-04-06T10:30` |
 | SQLite storage (`dtime`) | `YYYY-MM-DD HH:MM:SS` | UTC | `2026-04-06 08:30:00` |
 | daily-stats (slot computation) | `time.Time` → slot index | UTC → Europe/Berlin via `time.In()` | slot 189 = Mon 07:30 Berlin |
+| api heatmap (`/api/hourly-avg`) | `time.Time` → weekday + 30-min slot | UTC → Europe/Berlin via `time.In()` | slot 15 = 07:30–07:59 Berlin, summer and winter |
 | REST API output | RFC 3339 | Europe/Berlin (with UTC offset) | `2026-04-06T10:30:00+02:00` |
 | Frontend display | `toLocaleString` | Europe/Berlin (pinned via `timeZone`) | `06.04., 10:30` |
 
@@ -150,8 +155,8 @@ Fetches 7-day weather forecast from [Open-Meteo Forecast API](https://open-meteo
 | `GET /api/daily-overview` | Daily peak per pool (90th percentile of the day) since the first reading, for the time navigator; cached for 10 minutes |
 | `GET /api/daily-avg` | Get cached daily statistics |
 | `GET /api/daily-avg?pool=X` | Get cached daily statistics for a specific pool |
-| `GET /api/hourly-avg` | Get hourly average utilization per day-of-week (heatmap data) |
-| `GET /api/hourly-avg?pool=X` | Get heatmap data for a specific pool |
+| `GET /api/hourly-avg` | Heatmap data: per pool, Berlin weekday and 30-minute slot, the median utility (% free, field `mean`) of the last 60 days, with the number of readings and the share that read as closed |
+| `GET /api/hourly-avg?pool=X` | Heatmap data for a specific pool |
 | `GET /api/predictions` | Get current predictions for all pools |
 
 ## Data Storage
