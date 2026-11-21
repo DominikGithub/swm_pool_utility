@@ -180,6 +180,44 @@ button.active {
   font-size: 1.25rem;
 }
 
+/* Two-way switch (heatmap colour scale and time range): the selected half is filled. */
+.segmented {
+  display: flex;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 102, 204, 0.15);
+}
+
+.segmented button {
+  background: white;
+  color: #0066cc;
+  border: 2px solid #0066cc;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0.6rem 1rem;
+}
+
+.segmented button:first-child {
+  border-radius: 12px 0 0 12px;
+}
+
+.segmented button:last-child {
+  border-left: none;
+  border-radius: 0 12px 12px 0;
+}
+
+.segmented button:hover {
+  transform: none;
+  box-shadow: none;
+  background: #eef5fc;
+}
+
+.segmented button.active,
+.segmented button.active:hover {
+  background: #0066cc;
+  color: white;
+  box-shadow: none;
+}
+
 .chart-container {
   flex: 1;
   background: white;
@@ -279,7 +317,12 @@ button.active {
     justify-content: center;
     height: 36px;
   }
-  
+
+  .controls .segmented button {
+    min-width: 0;
+    padding: 0 0.75rem;
+  }
+
   .chart-container {
     min-height: 220px;
   }

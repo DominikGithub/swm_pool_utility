@@ -1,7 +1,14 @@
 <template>
   <div class="heatmap-container">
-    <div class="heatmap-grid" :class="{ 'single-pool': poolDataList.length === 1 }">
-      <div v-for="poolData in poolDataList" :key="poolData.pool" class="pool-heatmap">
+    <div
+      ref="gridEl"
+      class="heatmap-grid"
+      :class="{ 'single-pool': isSinglePool }"
+      @mousemove="onGridPointer"
+      @click="onGridPointer"
+      @mouseleave="openRow = ''"
+    >
+      <div v-for="poolData in poolDataList" :key="poolData.pool" class="pool-heatmap" :data-pool="poolData.pool">
         <div class="pool-header">
           <svg v-if="poolData.type === 'outdoor'" class="pool-type-icon outdoor" viewBox="0 0 16 16" role="img" aria-label="Outdoor pool (Freibad)">
             <title>Outdoor pool (Freibad)</title>
@@ -36,20 +43,42 @@
             </div>
           </div>
         </div>
+        <!-- Per-pool key: collapsed until the pointer is over this row of pools. -->
+        <div v-if="perPool" class="pool-key-wrap" :class="{ open: isSinglePool || openPools.has(poolData.pool) }">
+          <div class="pool-key-inner">
+            <div v-if="poolScales[poolData.pool]" class="heatmap-key pool-key">
+              <span class="key-label">≤{{ fmt(poolScales[poolData.pool].lo) }}%</span>
+              <div class="key-scale ticked">
+                <div v-for="level in 6" :key="level" class="key-cell" :class="`level-${level - 1}`"></div>
+                <span
+                  v-for="(tick, i) in ticks(poolScales[poolData.pool])"
+                  :key="i"
+                  class="key-tick"
+                  :style="{ left: `${(i * 100) / 6}%` }"
+                >{{ tick }}</span>
+              </div>
+              <span class="key-label">≥{{ fmt(poolScales[poolData.pool].hi) }}% full</span>
+            </div>
+            <p v-else class="key-note">No open readings in this period</p>
+          </div>
+        </div>
       </div>
     </div>
     <!-- "key", not "legend": style.css hides every div whose class contains "legend". -->
     <div class="heatmap-key">
-      <span class="key-label">{{ scale ? `≤${Math.round(scale.lo)}%` : 'Low crowds' }}</span>
+      <span class="key-label">{{ perPool ? 'Quiet for the pool' : 'Low crowds' }}</span>
       <div class="key-scale">
         <div v-for="level in 6" :key="level" class="key-cell" :class="`level-${level - 1}`"></div>
       </div>
-      <span class="key-label">{{ scale ? `≥${Math.round(scale.hi)}% full` : 'High crowds' }}</span>
+      <span class="key-label">{{ perPool ? 'Busy for the pool' : 'High crowds' }}</span>
       <span class="key-separator">|</span>
       <div class="key-cell closed"></div>
       <span class="key-label">Closed</span>
     </div>
-    <p v-if="scale" class="key-note">Colours span this pool's own usual range, so quiet and busy times stand out even when it is never crowded.</p>
+    <p v-if="perPool" class="key-note">
+      Each pool's colours span its own usual range (5th to 95th percentile of its half-hour slots);
+      {{ isSinglePool ? 'the range is shown above.' : 'point at a row to see the ranges.' }}
+    </p>
     <div v-if="tooltip.visible" class="tooltip" :style="{ left: tooltip.x + 'px', top: tooltip.y + 'px' }">
       {{ tooltip.text }}
     </div>
@@ -61,7 +90,9 @@ import { computed, ref } from 'vue'
 
 const props = defineProps({
   data: { type: Array, default: () => [] },
-  knownPools: { type: Array, default: () => [] }
+  knownPools: { type: Array, default: () => [] },
+  // 'fixed': same occupancy bands for every pool; 'pool': each pool's own range.
+  scaleMode: { type: String, default: 'fixed' }
 })
 
 const tooltip = ref({ visible: false, x: 0, y: 0, text: '' })
@@ -95,9 +126,12 @@ const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 //     [16, 36]  →  open 08:00, close 18:00
 //
 // Freibad (outdoor pool) closing times are weather‑dependent (set Mon/Thu
-// by SWM based on the forecast).  The JSON uses 21:00 (slot 42) as an upper
-// bound — the statistical closedFraction detection in the hourly-avg API
-// catches actual earlier closings.
+// by SWM based on the forecast) and not published as fixed times.  The JSON
+// uses 20:00 (slot 40) as an upper bound: in the whole 2026 season no
+// Freibad had open readings after 20:15 — the statistical closedFraction
+// detection in the hourly-avg API catches earlier closings.  Exception:
+// the Dantebad's stadium area is open 7:00/7:30–23:00 in summer too
+// (swm.de, checked 11/2026 incl. the archived summer 2026 pages).
 //
 // Each entry also carries "type": "outdoor" (Freibad) or "indoor"
 // (Hallenbad), shown as an icon next to the pool name.  The
@@ -185,25 +219,27 @@ function cellState(poolData, dayIdx, slotIdx) {
 }
 
 // ---------------------------------------------------------------------------
-// Colour scale
+// Colour scale (scaleMode prop, toggled above the heatmap)
 //
-// All pools: fixed occupancy bands, so the same colour means the same crowd
-// in every pool and the pools can be compared.
+// 'fixed': the same occupancy bands for every pool, so a colour means the
+// same crowd everywhere and the pools can be compared.
 //
-// One pool selected: the six colours span that pool's own usual range, from
-// the 5th to the 95th percentile of its cells (the few most extreme cells
-// would otherwise stretch the scale and flatten everything else). A pool
-// that is never busy, like the Dante-Winter-Warmfreibad in autumn at 2–9%,
-// would be a single shade of green on the fixed bands. The range is at least
-// MIN_SPAN points wide so that a 1–2 point wobble in an almost empty pool
-// does not flip colours.
+// 'pool': the six colours span each pool's own usual range. The range runs
+// from the 5th to the 95th percentile of the pool's open half-hour cells, so
+// the quietest 5% of its week (typically the first and last half hour of a
+// day) and the busiest 5% (typically weekend afternoons) are clipped to the
+// end colours instead of stretching the scale and flattening everything
+// else. A pool that is never busy, like the Dante-Winter-Warmfreibad in
+// autumn at 2–9%, is a single shade of green on the fixed bands but shows
+// its daily pattern here.
 // ---------------------------------------------------------------------------
 const FIXED_BANDS = [12, 18, 25, 35, 60]
-const MIN_SPAN = 12
+const CLIP = 0.05
 
-const scale = computed(() => {
-  if (poolDataList.value.length !== 1) return null
-  const poolData = poolDataList.value[0]
+const perPool = computed(() => props.scaleMode === 'pool')
+const isSinglePool = computed(() => poolDataList.value.length === 1)
+
+function percentileRange(poolData) {
   const occupancy = []
   for (let d = 0; d < 7; d++) {
     for (let s = 0; s < 48; s++) {
@@ -214,20 +250,55 @@ const scale = computed(() => {
   if (occupancy.length === 0) return null
   occupancy.sort((a, b) => a - b)
   const quantile = p => occupancy[Math.min(occupancy.length - 1, Math.floor(p * occupancy.length))]
-  const lo = quantile(0.05)
-  return { lo, hi: Math.max(quantile(0.95), lo + MIN_SPAN) }
+  const lo = quantile(CLIP)
+  const hi = quantile(1 - CLIP)
+  return { lo, hi: hi > lo ? hi : lo + 1 } // all cells equal: avoid a zero-width range
+}
+
+// pool name → { lo, hi } in % full, or null when the pool has no open cells.
+const poolScales = computed(() => {
+  if (!perPool.value) return {}
+  return Object.fromEntries(poolDataList.value.map(p => [p.pool, percentileRange(p)]))
 })
 
-function levelFor(occupancy) {
-  const s = scale.value
-  if (s) return Math.min(5, Math.max(0, Math.floor((occupancy - s.lo) / (s.hi - s.lo) * 6)))
+function levelFor(occupancy, pool) {
+  const range = perPool.value ? poolScales.value[pool] : null
+  if (range) return Math.min(5, Math.max(0, Math.floor(((occupancy - range.lo) / (range.hi - range.lo)) * 6)))
   const band = FIXED_BANDS.findIndex(limit => occupancy < limit)
   return band === -1 ? 5 : band
 }
 
 function getCellClass(poolData, dayIdx, slotIdx) {
   const state = cellState(poolData, dayIdx, slotIdx)
-  return typeof state === 'number' ? `level-${levelFor(state)}` : state
+  return typeof state === 'number' ? `level-${levelFor(state, poolData.pool)}` : state
+}
+
+const fmt = v => String(Math.round(v * 10) / 10)
+
+// The seven colour boundaries of a per-pool range, for the tick labels.
+function ticks(range) {
+  return Array.from({ length: 7 }, (_, i) => fmt(range.lo + (i * (range.hi - range.lo)) / 6))
+}
+
+// ---------------------------------------------------------------------------
+// Per-pool keys open for the row of pools under the pointer (two pools per
+// row on wide screens, one on narrow ones) and close again when the pointer
+// leaves the heatmap or moves to another row. The row is found by height, so
+// the gap between the two pools of a row does not close it.
+// ---------------------------------------------------------------------------
+const gridEl = ref(null)
+const openRow = ref('') // names of the pools in the open row, joined by '\n'
+const openPools = computed(() => new Set(openRow.value ? openRow.value.split('\n') : []))
+
+function onGridPointer(event) {
+  if (!perPool.value || isSinglePool.value || !gridEl.value) return
+  const items = [...gridEl.value.querySelectorAll('.pool-heatmap')]
+  const hit = items.find(el => {
+    const r = el.getBoundingClientRect()
+    return event.clientY >= r.top && event.clientY <= r.bottom
+  })
+  const row = hit ? items.filter(el => el.offsetTop === hit.offsetTop).map(el => el.dataset.pool).join('\n') : ''
+  if (row !== openRow.value) openRow.value = row
 }
 
 function formatTime(slotIdx) {
@@ -422,6 +493,41 @@ function hideTooltip() {
   font-size: 0.7rem;
   color: #888;
   text-align: center;
+}
+
+/* Per-pool key: a 0fr → 1fr grid row animates the height without a fixed max-height. */
+.pool-key-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.2s ease;
+}
+
+.pool-key-wrap.open {
+  grid-template-rows: 1fr;
+}
+
+.pool-key-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.heatmap-key.pool-key {
+  margin-top: 0.5rem;
+  padding-bottom: 0.9rem; /* room for the tick labels */
+}
+
+.key-scale.ticked {
+  position: relative;
+}
+
+.key-tick {
+  position: absolute;
+  top: 100%;
+  margin-top: 2px;
+  transform: translateX(-50%);
+  font-size: 0.6rem;
+  color: #888;
+  white-space: nowrap;
 }
 
 @media (max-width: 900px) {

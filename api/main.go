@@ -511,12 +511,6 @@ func getDailyAvg(c *gin.Context) {
 	})
 }
 
-// heatmapWindowDays is how far back the heatmap looks (calendar days, Berlin
-// time). A rolling window keeps the weekly pattern in season: the pools are
-// much quieter in autumn than in spring and summer, so a median over all
-// readings since recording began overstates how busy they are right now.
-const heatmapWindowDays = 60
-
 type hourlyData struct {
 	Pool           string  `json:"pool"`
 	DayOfWeek      int     `json:"day_of_week"` // Berlin weekday, 0 = Sunday … 6 = Saturday
@@ -583,20 +577,35 @@ func aggregateHourly(cells map[heatmapKey][]int) []hourlyData {
 }
 
 // getHourlyAvg serves the heatmap: per pool, Berlin weekday and 30-minute
-// slot, the median utility of the last heatmapWindowDays days. Readings are
-// bucketed in Go rather than SQL because SQLite has no timezone database and
-// a fixed UTC offset would shift every winter reading by an hour.
+// slot, the median utility of all readings since recording began, or of the
+// last `days` calendar days (Berlin time) when days > 0. A recent window
+// follows the season — the pools are much quieter in autumn than in summer —
+// but leaves pools that are closed for the season without data.
+//
+// Readings are bucketed in Go rather than SQL because SQLite has no timezone
+// database and a fixed UTC offset would shift every winter reading by an hour.
 func getHourlyAvg(c *gin.Context) {
 	pool := c.Query("pool")
-	from := time.Now().In(berlinLoc).AddDate(0, 0, -heatmapWindowDays).UTC().Format(dbTimeLayout)
+	days, err := strconv.Atoi(c.DefaultQuery("days", "0"))
+	if err != nil || days < 0 {
+		c.JSON(400, gin.H{"error": "days must be a whole number >= 0 (0 = all data)"})
+		return
+	}
 
 	query := `SELECT p.name, tp.dtime, tp.utility
-		FROM track_pools tp JOIN pools p ON tp.pool_id = p.id
-		WHERE tp.dtime >= ?`
-	args := []interface{}{from}
+		FROM track_pools tp JOIN pools p ON tp.pool_id = p.id`
+	var conds []string
+	var args []interface{}
+	if days > 0 {
+		conds = append(conds, "tp.dtime >= ?")
+		args = append(args, time.Now().In(berlinLoc).AddDate(0, 0, -days).UTC().Format(dbTimeLayout))
+	}
 	if pool != "" {
-		query += " AND p.name = ?"
+		conds = append(conds, "p.name = ?")
 		args = append(args, pool)
+	}
+	if len(conds) > 0 {
+		query += " WHERE " + strings.Join(conds, " AND ")
 	}
 
 	rows, err := db.Query(query, args...)
