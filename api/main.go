@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -510,55 +511,102 @@ func getDailyAvg(c *gin.Context) {
 	})
 }
 
+type hourlyData struct {
+	Pool           string  `json:"pool"`
+	DayOfWeek      int     `json:"day_of_week"` // Berlin weekday, 0 = Sunday … 6 = Saturday
+	Slot           int     `json:"slot"`        // 30-minute slot of the Berlin day, 0 = 00:00–00:29
+	Mean           float64 `json:"mean"`        // median utility (% free); the name predates the median
+	Samples        int     `json:"samples"`
+	ClosedFraction float64 `json:"closed_fraction"` // share of readings at >= 99% free
+}
+
+type heatmapKey struct {
+	pool      string
+	dow, slot int
+}
+
+// berlinSlot returns the Berlin weekday and 30-minute slot of a reading.
+// time.In follows the CET/CEST switch, so a 07:30 visit lands in the same
+// slot in winter and in summer.
+func berlinSlot(t time.Time) (dow, slot int) {
+	local := t.In(berlinLoc)
+	return int(local.Weekday()), local.Hour()*2 + local.Minute()/30
+}
+
+// aggregateHourly reduces the readings of each (pool, weekday, slot) cell to
+// its median — the mean of the two middle readings for an even count — the
+// number of readings, and the share of readings that look closed. Cells come
+// out sorted by pool, weekday and slot.
+func aggregateHourly(cells map[heatmapKey][]int) []hourlyData {
+	keys := make([]heatmapKey, 0, len(cells))
+	for k := range cells {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		a, b := keys[i], keys[j]
+		if a.pool != b.pool {
+			return a.pool < b.pool
+		}
+		if a.dow != b.dow {
+			return a.dow < b.dow
+		}
+		return a.slot < b.slot
+	})
+
+	data := make([]hourlyData, 0, len(keys))
+	for _, k := range keys {
+		v := cells[k]
+		sort.Ints(v)
+		n := len(v)
+		closed := 0
+		for _, u := range v {
+			if u >= 99 {
+				closed++
+			}
+		}
+		data = append(data, hourlyData{
+			Pool:           k.pool,
+			DayOfWeek:      k.dow,
+			Slot:           k.slot,
+			Mean:           float64(v[(n-1)/2]+v[n/2]) / 2,
+			Samples:        n,
+			ClosedFraction: float64(closed) / float64(n),
+		})
+	}
+	return data
+}
+
+// getHourlyAvg serves the heatmap: per pool, Berlin weekday and 30-minute
+// slot, the median utility of all readings since recording began, or of the
+// last `days` calendar days (Berlin time) when days > 0. A recent window
+// follows the season — the pools are much quieter in autumn than in summer —
+// but leaves pools that are closed for the season without data.
+//
+// Readings are bucketed in Go rather than SQL because SQLite has no timezone
+// database and a fixed UTC offset would shift every winter reading by an hour.
 func getHourlyAvg(c *gin.Context) {
 	pool := c.Query("pool")
-
-	// Median aggregation via CTEs + SQLite window functions.
-	//
-	// base:   extracts pool name, day-of-week, 30-min slot, and raw utility.
-	//         The slot/dow expressions are written once here and reused by name.
-	// ranked: assigns a rank ordered by utility within each (pool, dow, slot)
-	//         partition and records the partition size.
-	// final:  keeps only the middle row(s) — one for odd counts, two for even —
-	//         and averages them.  This is the standard median definition.
-	baseFilter := ""
-	var args []interface{}
-	if pool != "" {
-		baseFilter = " WHERE p.name = ?"
-		args = append(args, pool)
+	days, err := strconv.Atoi(c.DefaultQuery("days", "0"))
+	if err != nil || days < 0 {
+		c.JSON(400, gin.H{"error": "days must be a whole number >= 0 (0 = all data)"})
+		return
 	}
 
-	query := `
-		WITH base AS (
-			SELECT
-				p.name AS pool_name,
-				strftime('%w', datetime(tp.dtime, '+2 hours')) AS dow,
-				strftime('%H', datetime(tp.dtime, '+2 hours')) * 2 +
-					CASE WHEN CAST(strftime('%M', datetime(tp.dtime, '+2 hours'))
-					     AS INTEGER) >= 30 THEN 1 ELSE 0 END  AS slot,
-				tp.utility
-			FROM track_pools tp JOIN pools p ON tp.pool_id = p.id
-			` + baseFilter + `
-		),
-		ranked AS (
-			SELECT *,
-				ROW_NUMBER() OVER (PARTITION BY pool_name, dow, slot ORDER BY utility) AS rn,
-				COUNT(*)       OVER (PARTITION BY pool_name, dow, slot)                AS cnt,
-				SUM(CASE WHEN utility >= 99 THEN 1 ELSE 0 END)
-				               OVER (PARTITION BY pool_name, dow, slot)                AS closed_sum
-			FROM base
-		)
-		SELECT
-			pool_name,
-			dow,
-			slot,
-			AVG(utility)                      AS median_util,
-			MAX(cnt)                          AS sample_count,
-			MAX(closed_sum) * 1.0 / MAX(cnt)  AS closed_fraction
-		FROM ranked
-		WHERE rn IN ((cnt + 1) / 2, (cnt + 2) / 2)
-		GROUP BY pool_name, dow, slot
-		ORDER BY pool_name, dow, slot`
+	query := `SELECT p.name, tp.dtime, tp.utility
+		FROM track_pools tp JOIN pools p ON tp.pool_id = p.id`
+	var conds []string
+	var args []interface{}
+	if days > 0 {
+		conds = append(conds, "tp.dtime >= ?")
+		args = append(args, time.Now().In(berlinLoc).AddDate(0, 0, -days).UTC().Format(dbTimeLayout))
+	}
+	if pool != "" {
+		conds = append(conds, "p.name = ?")
+		args = append(args, pool)
+	}
+	if len(conds) > 0 {
+		query += " WHERE " + strings.Join(conds, " AND ")
+	}
 
 	rows, err := db.Query(query, args...)
 	if err != nil {
@@ -567,25 +615,24 @@ func getHourlyAvg(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	type hourlyData struct {
-		Pool           string  `json:"pool"`
-		DayOfWeek      int     `json:"day_of_week"`
-		Slot           int     `json:"slot"`
-		Mean           float64 `json:"mean"`
-		Samples        int     `json:"samples"`
-		ClosedFraction float64 `json:"closed_fraction"`
-	}
-
-	data := make([]hourlyData, 0)
+	cells := make(map[heatmapKey][]int)
 	for rows.Next() {
-		var hd hourlyData
-		if err := rows.Scan(&hd.Pool, &hd.DayOfWeek, &hd.Slot, &hd.Mean, &hd.Samples, &hd.ClosedFraction); err != nil {
+		var name string
+		var dtime time.Time // go-sqlite3 parses DATETIME columns into time.Time (UTC)
+		var utility int
+		if err := rows.Scan(&name, &dtime, &utility); err != nil {
 			continue
 		}
-		data = append(data, hd)
+		dow, slot := berlinSlot(dtime)
+		k := heatmapKey{pool: name, dow: dow, slot: slot}
+		cells[k] = append(cells[k], utility)
+	}
+	if err := rows.Err(); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
 	}
 
-	c.JSON(200, data)
+	c.JSON(200, aggregateHourly(cells))
 }
 
 func getPredictions(c *gin.Context) {
@@ -708,7 +755,13 @@ func main() {
 		log.Fatal("failed to load Europe/Berlin timezone:", err)
 	}
 
-	db, err = sql.Open("sqlite3", "/data/swm_pool_utility.db")
+	// DB_PATH lets the API run outside Docker (e.g. against a local backup);
+	// the other services read the same variable.
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "/data/swm_pool_utility.db"
+	}
+	db, err = sql.Open("sqlite3", dbPath)
 	if err != nil {
 		log.Fatal(err)
 	}

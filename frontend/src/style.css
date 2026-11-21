@@ -53,8 +53,11 @@ header h1 {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 28px;
+  height: 28px;
+  /* Hang into the header padding so the bar keeps the height of the title
+     alone, as before the link existed (the title line is ~19–24px tall). */
+  margin-block: -6px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.1);
   flex-shrink: 0;
@@ -73,8 +76,8 @@ header h1 {
 }
 
 .github-link svg {
-  width: 24px;
-  height: 24px;
+  width: 18px;
+  height: 18px;
   fill: currentColor;
 }
 
@@ -95,6 +98,19 @@ main {
   gap: 1rem;
   margin-bottom: 1rem;
   align-items: center;
+  flex-shrink: 0;
+}
+
+/* Buttons with a compact phone label (e.g. Refresh → ↻). */
+.label-short {
+  display: none;
+}
+
+/* One line under the heatmap switches saying what the heatmap shows. */
+.heatmap-caption {
+  margin: -0.5rem 0 0.75rem;
+  font-size: 0.75rem;
+  color: #6b7280;
   flex-shrink: 0;
 }
 
@@ -175,6 +191,44 @@ button.active {
 
 .weather-btn .weather-icon {
   font-size: 1.25rem;
+}
+
+/* Two-way switch (heatmap colour scale and time range): the selected half is filled. */
+.segmented {
+  display: flex;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 102, 204, 0.15);
+}
+
+.segmented button {
+  background: white;
+  color: #0066cc;
+  border: 2px solid #0066cc;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0.6rem 1rem;
+}
+
+.segmented button:first-child {
+  border-radius: 12px 0 0 12px;
+}
+
+.segmented button:last-child {
+  border-left: none;
+  border-radius: 0 12px 12px 0;
+}
+
+.segmented button:hover {
+  transform: none;
+  box-shadow: none;
+  background: #eef5fc;
+}
+
+.segmented button.active,
+.segmented button.active:hover {
+  background: #0066cc;
+  color: white;
+  box-shadow: none;
 }
 
 .chart-container {
@@ -261,22 +315,68 @@ button.active {
     gap: 0.5rem;
   }
   
-  .controls select,
-  .controls button {
-    min-width: 120px;
-    padding: 0.5rem 1rem;
+  /* Row 1: the two selects side by side; row 2: all buttons, compact. */
+  .controls select {
+    flex: 1 1 calc(50% - 0.25rem);
+    min-width: 0;
+    padding: 0.5rem 2rem 0.5rem 0.75rem;
+    background-position: right 0.6rem center;
     font-size: 0.8rem;
     height: 36px;
   }
 
+  .controls button {
+    min-width: 0;
+    padding: 0 0.6rem;
+    font-size: 0.68rem;
+    letter-spacing: 0;
+    height: 30px;
+    border-radius: 9px;
+  }
+
   .controls .weather-btn {
-    padding: 0 1rem;
+    padding: 0 0.6rem;
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 36px;
+    height: 30px;
   }
-  
+
+  .controls .weather-btn .weather-icon {
+    font-size: 1rem;
+  }
+
+  .controls .segmented {
+    border-radius: 9px;
+  }
+
+  .controls .segmented button {
+    padding: 0 0.4rem;
+  }
+
+  .controls .label-long {
+    display: none;
+  }
+
+  .controls .label-short {
+    display: inline;
+    font-size: 1rem;
+    line-height: 1;
+  }
+
+  .controls .segmented button:first-child {
+    border-radius: 9px 0 0 9px;
+  }
+
+  .controls .segmented button:last-child {
+    border-radius: 0 9px 9px 0;
+  }
+
+  .heatmap-caption {
+    margin: -1.1rem 0 -0.25rem;
+    font-size: 0.68rem;
+  }
+
   .chart-container {
     min-height: 220px;
   }

@@ -29,11 +29,44 @@
         <option value="weekday">Daily Statistics</option>
         <option value="heatmap">Heatmap</option>
       </select>
-      <button @click="refresh">Refresh</button>
+      <button @click="refresh" aria-label="Refresh" title="Refresh">
+        <span class="label-long">Refresh</span><span class="label-short" aria-hidden="true">↻</span>
+      </button>
       <button v-show="!isWeekdayView && !isHeatmapView" @click="toggleWeather" :class="{ active: showWeather }" class="weather-btn">
         <span class="weather-icon">{{ showWeather ? '🌤️' : '☁️' }}</span>
       </button>
+      <template v-if="isHeatmapView">
+        <div class="segmented" role="group" aria-label="Heatmap colour scale">
+          <button
+            :class="{ active: heatmapScale === 'fixed' }"
+            :aria-pressed="heatmapScale === 'fixed'"
+            title="Fixed: the same colour bands for every pool, so the pools can be compared"
+            @click="setHeatmapScale('fixed')"
+          >Fixed</button>
+          <button
+            :class="{ active: heatmapScale === 'pool' }"
+            :aria-pressed="heatmapScale === 'pool'"
+            title="Per pool: colours span each pool's own usual range (5th to 95th percentile)"
+            @click="setHeatmapScale('pool')"
+          >Per pool</button>
+        </div>
+        <div class="segmented" role="group" aria-label="Heatmap time range">
+          <button
+            :class="{ active: heatmapDays === 0 }"
+            :aria-pressed="heatmapDays === 0"
+            title="All time: every reading since recording began"
+            @click="setHeatmapDays(0)"
+          >All time</button>
+          <button
+            :class="{ active: heatmapDays === SEASON_DAYS }"
+            :aria-pressed="heatmapDays === SEASON_DAYS"
+            :title="`Season: a rolling window of the last ${SEASON_DAYS} days, so the pattern follows the current time of year`"
+            @click="setHeatmapDays(SEASON_DAYS)"
+          >Season</button>
+        </div>
+      </template>
     </div>
+    <p v-if="isHeatmapView" class="heatmap-caption">{{ heatmapCaption }}</p>
 
     <div v-if="loading" class="loading">Loading...</div>
     <template v-else>
@@ -41,6 +74,7 @@
         <HeatmapCard
           :data="hourlyData"
           :knownPools="selectedPool ? [] : pools"
+          :scaleMode="heatmapScale"
         />
       </div>
       <template v-else>
@@ -126,6 +160,21 @@ const favorite = ref('')
 const hoverData = ref(null)
 const hoverInfo = ref(null)
 const showWeather = ref(localStorage.getItem('swm_showWeather') === 'true')
+// Heatmap options (remembered per browser): colour scale 'fixed' | 'pool',
+// time range 0 = all time or SEASON_DAYS = rolling season.
+const SEASON_DAYS = 60
+const heatmapScale = ref(localStorage.getItem('swm_heatmapScale') === 'pool' ? 'pool' : 'fixed')
+const heatmapDays = ref(localStorage.getItem('swm_heatmapDays') === String(SEASON_DAYS) ? SEASON_DAYS : 0)
+// One short line under the switches saying what the heatmap currently shows.
+const heatmapCaption = computed(() => {
+  const range = heatmapDays.value === 0
+    ? 'All time: every reading since recording began'
+    : `Rolling season: the last ${SEASON_DAYS} days`
+  const scale = heatmapScale.value === 'fixed'
+    ? 'Same colour bands for every pool'
+    : `Each pool's own range (5th–95th percentile)${selectedPool.value ? '' : ', point at a pool to see it'}`
+  return `${range} · ${scale}`
+})
 // End of the chart's time window when looking into the past (ms of a Berlin day
 // start, exclusive); null for the live window ending now.
 const windowEnd = ref(null)
@@ -533,7 +582,7 @@ async function fetchData({ quiet = false } = {}) {
     const isHeatmap = selectedDays.value === 'heatmap'
 
     if (isHeatmap) {
-      const data = await fetchHourlyAvg(selectedPool.value)
+      const data = await fetchHourlyAvg(selectedPool.value, heatmapDays.value)
       if (seq !== fetchSeq) return
       hourlyData.value = data
     } else if (isWeekday) {
@@ -600,6 +649,18 @@ function onRangeChange() {
     windowEnd.value = Date.parse(days[Math.min(selectedDays.value, days.length - 1)])
   }
   fetchData()
+}
+
+function setHeatmapScale(mode) {
+  heatmapScale.value = mode
+  localStorage.setItem('swm_heatmapScale', mode)
+}
+
+function setHeatmapDays(days) {
+  if (heatmapDays.value === days) return
+  heatmapDays.value = days
+  localStorage.setItem('swm_heatmapDays', String(days))
+  fetchData({ quiet: true })
 }
 
 async function toggleWeather() {

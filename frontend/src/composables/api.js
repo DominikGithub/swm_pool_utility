@@ -33,8 +33,12 @@ export async function fetchDailyOverview() {
   return res.json()
 }
 
-export async function fetchHourlyAvg(pool = '') {
-  const qs = pool ? `pool=${encodeURIComponent(pool)}` : ''
+// Heatmap cells; days = 0 uses all readings, days > 0 only the last `days` days.
+export async function fetchHourlyAvg(pool = '', days = 0) {
+  const params = new URLSearchParams()
+  if (pool) params.set('pool', pool)
+  if (days > 0) params.set('days', days)
+  const qs = params.toString()
   const res = await fetch(`${API_BASE}/hourly-avg${qs ? '?' + qs : ''}`)
   return toArray(await res.json())
 }
