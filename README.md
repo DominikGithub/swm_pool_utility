@@ -4,15 +4,17 @@ A monitoring application that tracks historical pool utilization from SWM (Stadt
 
 [![Pool Dashboard](res/pool_dashboard_20260412_1.png)](http://grid.resolve.bar:8086/)
 
+The chart here is moved back to 10–12 April 2026 with the time navigator below it, which shows one bar per day over the whole recorded history.
+
 ### Heatmap
 ![Heatmap](res/heatmap.png)
 
-The heatmap view shows the typical weekly utilization in 30 minute intervals, based on all readings since recording began or, switchable, on a rolling season (the last 60 days).
+The heatmap view shows the typical weekly utilization in 30 minute intervals, based on all readings since recording began or, switchable, on a rolling season (the last 60 days). The screenshot uses the readings up to 15 April 2026 and each pool's own colour range. The pointer is on the Dante winter pool, so its histogram takes the place of its row neighbour and the row's colour keys are open.
 
 ### Daily Statistics
 ![Daily Statistics](res/dashboard_daily_average_michaelibad.png)
 
-The Daily Statistics view derives general per week day statistics from historical data.
+The Daily Statistics view derives general per week day statistics from historical data (screenshot: readings up to 5 April 2026).
 
 
 ## Quick Start

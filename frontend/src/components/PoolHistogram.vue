@@ -91,9 +91,14 @@ const bars = computed(() => counts.value.flatMap((c, i) => {
   }]
 }))
 
+// Room kept free at the right end of the axis for the "% full" label, so a tick
+// there (e.g. 30 when the bars end at 30%) does not run into it.
+const UNIT_LABEL_W = 34
+
 const xTicks = computed(() => {
   const step = domainMax.value <= 20 ? 2 : domainMax.value <= 50 ? 5 : 10
   return Array.from({ length: Math.floor(domainMax.value / step) + 1 }, (_, i) => i * step)
+    .filter(t => X(t) <= width.value - PAD.r - UNIT_LABEL_W)
 })
 
 const markers = computed(() => {
